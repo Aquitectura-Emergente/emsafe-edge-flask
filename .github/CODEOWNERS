@@ -1,0 +1,11 @@
+# Dueños del código: cualquier PR a `main` necesita la aprobación de uno de
+# los dos. Con varios dueños listados basta con que apruebe cualquiera.
+#
+# Lo exige el ruleset de `main` (regla `pull_request` con
+# require_code_owner_review). Sin este archivo, el contador de aprobaciones
+# acepta la de cualquier usuario con permiso de escritura.
+#
+# `develop` queda libre a propósito: el equipo saca ramas desde develop,
+# trabaja y las junta ahí sin aprobación.
+
+* @FabricioLop @CarlosG345
