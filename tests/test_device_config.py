@@ -1,4 +1,4 @@
-"""DeviceConfig: el umbral del responsable de SSO, validado y versionado."""
+"""DeviceConfig: el umbral de la nube, validado y versionado."""
 import unittest
 from datetime import datetime, timedelta, timezone
 

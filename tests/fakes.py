@@ -142,7 +142,7 @@ class FakeConfigStore:
 
 
 class FakeLink:
-    """Dosímetro simulado: registra los umbrales escritos por BLE."""
+    """Sensor simulado: registra los umbrales escritos por BLE."""
 
     def __init__(self, connected=(), fail: bool = False) -> None:
         self.connected = set(connected)

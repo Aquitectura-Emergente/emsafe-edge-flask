@@ -1,4 +1,4 @@
-"""Configuraciones de dosímetros sobre SQLite (Peewee). Implementa `ConfigStore`."""
+"""Configuración del sensor sobre SQLite (Peewee). Implementa `ConfigStore`."""
 from __future__ import annotations
 
 from typing import Optional

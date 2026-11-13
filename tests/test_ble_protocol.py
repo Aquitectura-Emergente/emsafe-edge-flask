@@ -1,4 +1,4 @@
-"""Contrato BLE: bytes exactos que entiende el firmware del dosímetro."""
+"""Contrato BLE: bytes exactos que entiende el firmware del sensor."""
 import math
 import os
 import struct

@@ -1,4 +1,4 @@
-"""Conectividad de los dosímetros: publica cambios y los republica al reconectar el broker."""
+"""Conectividad del sensor: publica cambios y los republica al reconectar el broker."""
 import unittest
 
 from monitoring.application.track_connectivity import TrackConnectivityUseCase

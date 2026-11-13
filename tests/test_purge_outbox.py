@@ -74,7 +74,7 @@ class PurgeContract:
 
     def test_tras_borrar_un_reenvio_viejo_vuelve_a_entrar(self):
         # Consecuencia aceptada: pasada la retención, la identidad se olvida.
-        # El buffer del dosímetro dura ~30 min, así que en la práctica no ocurre.
+        # El buffer del sensor dura ~30 min, así que en la práctica no ocurre.
         now = T0 + timedelta(days=30)
         self.outbox.add(reading(1, T0))
         self.publish_all(now - timedelta(days=10))

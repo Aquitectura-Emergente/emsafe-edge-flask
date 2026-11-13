@@ -25,7 +25,7 @@ def build(**overrides):
 
 
 class CapturedAtTest(unittest.TestCase):
-    def test_con_hora_del_dosimetro_usa_ts_en_utc(self):
+    def test_con_hora_del_sensor_usa_ts_en_utc(self):
         r = build()
 
         self.assertEqual(r.captured_at, datetime(2026, 11, 12, 15, 4, 3, tzinfo=timezone.utc))

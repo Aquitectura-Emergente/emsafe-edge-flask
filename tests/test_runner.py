@@ -57,7 +57,7 @@ class FakeMqtt:
 
 
 class FakeBle:
-    """Dosímetro simulado: al 'conectar' encola la sesión y sus lecturas."""
+    """Sensor simulado: al 'conectar' encola la sesión y sus lecturas."""
 
     def __init__(self, queue, connectivity, readings):
         self.device_name = DEVICE

@@ -1,4 +1,4 @@
-"""Configuración del dosímetro: validación, versiones y escritura del umbral."""
+"""Configuración del sensor: validación, versiones y escritura del umbral."""
 import asyncio
 import json
 import unittest
@@ -135,7 +135,7 @@ class ApplyTest(unittest.TestCase):
         self.assertEqual(store.get(DEVICE).config_version, 3)
 
 
-class WriteToDosimeterTest(unittest.TestCase):
+class WriteToSensorTest(unittest.TestCase):
     def test_conectado_escribe_el_umbral_en_caliente(self):
         use_case, _, link = build(connected=[DEVICE])
 
