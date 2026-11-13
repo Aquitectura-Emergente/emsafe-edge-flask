@@ -8,7 +8,7 @@ from typing import Callable, Dict, Optional
 from monitoring.domain.entities import Reading
 from monitoring.domain.ports import Clock, ReadingOutbox
 from monitoring.domain.services import ReadingFactory
-from monitoring.domain.value_objects import AlertThresholds, InvalidReading
+from monitoring.domain.value_objects import AlertThresholds, InvalidReading, ReadingQuality
 
 log = logging.getLogger(__name__)
 
@@ -60,10 +60,12 @@ class IngestReadingUseCase:
         if not self._outbox.add(reading):
             log.debug("Lectura duplicada de %s (seq=%s, ts=%s): se ignora", device_id, sequence, ts)
             return IngestResult.DUPLICATE
-        log.info(
+        # Las diferidas llegan de a cientos: solo en DEBUG.
+        log.log(
+            logging.DEBUG if reading.is_deferred else logging.INFO,
             "%s seq=%s %.1f µT %s %s%s", device_id, sequence, reading.flux.micro_tesla,
             reading.level.wire_value, reading.origin.value,
-            " SATURATED" if reading.quality.value == "SATURATED" else "",
+            " SATURATED" if reading.quality is ReadingQuality.SATURATED else "",
         )
         if self._on_stored is not None:
             self._on_stored(reading)
