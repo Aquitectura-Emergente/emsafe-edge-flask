@@ -77,6 +77,8 @@ class EdgeSettings:
     auto_cutoff_enabled: bool = True
     # Vacío: sin actuador.
     actuator_url: str = ""
+    # La API local no tiene autenticación: por defecto solo atiende al propio equipo.
+    http_host: str = "127.0.0.1"
     mqtt_host: str = "localhost"
     mqtt_port: int = 1883
     mqtt_tls: bool = False
@@ -128,6 +130,7 @@ class EdgeSettings:
             saturation_ut=_float(env, "EMSAFE_SATURATION_UT", d.saturation_ut),
             auto_cutoff_enabled=_bool(env, "EMSAFE_AUTO_CUTOFF_ENABLED", d.auto_cutoff_enabled),
             actuator_url=_text(env, "EMSAFE_ACTUATOR_URL", d.actuator_url).rstrip("/"),
+            http_host=_text(env, "EMSAFE_HTTP_HOST", d.http_host),
             mqtt_host=_text(env, "EMSAFE_MQTT_HOST", d.mqtt_host),
             mqtt_port=_int(env, "EMSAFE_MQTT_PORT", d.mqtt_port),
             mqtt_tls=_bool(env, "EMSAFE_MQTT_TLS", d.mqtt_tls),

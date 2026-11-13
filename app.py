@@ -37,8 +37,8 @@ app = create_app()
 
 
 def _debug_enabled() -> bool:
-    """Debug de Flask solo por entorno: con host 0.0.0.0 la consola de Werkzeug
-    permitiría ejecutar código en el equipo desde la red local."""
+    """Debug de Flask solo por entorno: la consola de Werkzeug permite ejecutar
+    código en el equipo a quien alcance la API."""
     return os.getenv("EMSAFE_EDGE_DEBUG", "").strip().lower() in ("1", "true", "yes")
 
 
@@ -76,8 +76,9 @@ def main() -> int:
     edge.start()
     web = create_app(SqliteReadingOutbox(), edge.health)
     try:
+        log.info("API local en http://%s:5000", settings.http_host)
         # Sin recargador: duplicaría el proceso y con él la conexión BLE.
-        web.run(host="0.0.0.0", port=5000, debug=_debug_enabled(), use_reloader=False)
+        web.run(host=settings.http_host, port=5000, debug=_debug_enabled(), use_reloader=False)
     except KeyboardInterrupt:
         pass
     finally:

@@ -3,7 +3,7 @@
 Nodo **Edge del segmento hogar** de EMSafe. Recibe por **BLE** las lecturas del sensor fijo de la
 vivienda, las valida, deduplica y guarda, **clasifica el nivel** (SAFE / CAUTION / DANGER),
 controla el **enchufe inteligente** y publica la telemetría por **MQTT** hacia la ingesta de
-**Device Management**. Expone una API local con Flask.
+**Device Management**. Expone una API local de diagnóstico con Flask.
 
 ```
 Sensor fijo (ESP32 #1) --BLE--> Edge hogar --HTTP/WiFi--> Actuador (ESP32 #2 + relé)
@@ -211,6 +211,7 @@ el arranque con un mensaje que nombra la variable.
 | `EMSAFE_MQTT_USERNAME` / `EMSAFE_MQTT_PASSWORD` | Credenciales del nodo | vacío |
 | `EMSAFE_DB_PATH` | Archivo SQLite del outbox y la config | `emsafe_edge.db` |
 | `EMSAFE_OUTBOX_RETENTION_DAYS` | Días que se conservan las lecturas ya publicadas (mínimo 1) | `7` |
+| `EMSAFE_HTTP_HOST` | Interfaz donde escucha la API local. `0.0.0.0` la abre a la red | `127.0.0.1` |
 | `EMSAFE_LOG_LEVEL` | Nivel de log (`DEBUG`, `INFO`, `WARNING`…) | `INFO` |
 | `EMSAFE_EDGE_DEBUG` | Debug de Flask. Solo para depurar: expone la consola de Werkzeug a la red | `false` |
 
@@ -231,7 +232,11 @@ O con el script, que crea el `.venv` la primera vez:
 .\run-local.ps1 -ActuatorUrl http://172.20.10.5
 ```
 
-La API queda en `http://localhost:5000`:
+La API queda en `http://localhost:5000`. Es **solo de diagnóstico** y **no tiene
+autenticación**: por eso escucha por defecto únicamente en `127.0.0.1`. Las aplicaciones (web y
+móvil) no la consumen: leen los datos del backend, que los recibe por MQTT. Solo cambia
+`EMSAFE_HTTP_HOST` (por ejemplo a `0.0.0.0`) en una red de confianza y mientras haga falta.
+
 
 - `GET /health`: estado del Edge, del BLE, de MQTT, del actuador (último estado del enchufe,
   orden del usuario, último error), lecturas pendientes y umbrales vigentes.

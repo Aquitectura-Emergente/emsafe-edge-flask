@@ -20,6 +20,7 @@ class DefaultsTest(unittest.TestCase):
         self.assertEqual(s.actuator_url, "")
         self.assertEqual(s.backend_url, "")
         self.assertEqual(s.log_level, "INFO")
+        self.assertEqual(s.http_host, "127.0.0.1")
         self.assertEqual(s.mqtt_host, "localhost")
         self.assertEqual(s.mqtt_port, 1883)
         self.assertFalse(s.mqtt_tls)
@@ -55,6 +56,7 @@ class ParsingTest(unittest.TestCase):
             "EMSAFE_ACTUATOR_URL": "http://192.168.1.50/",
             "EMSAFE_BACKEND_URL": "https://backend.local/",
             "EMSAFE_LOG_LEVEL": "debug",
+            "EMSAFE_HTTP_HOST": "0.0.0.0",
             "EMSAFE_SATURATION_UT": "780",
             "EMSAFE_MQTT_HOST": "broker.local",
             "EMSAFE_MQTT_PORT": "8883",
@@ -74,6 +76,7 @@ class ParsingTest(unittest.TestCase):
         self.assertEqual(s.actuator_url, "http://192.168.1.50")
         self.assertEqual(s.backend_url, "https://backend.local")
         self.assertEqual(s.log_level, "DEBUG")
+        self.assertEqual(s.http_host, "0.0.0.0")
         self.assertEqual(s.saturation_ut, 780.0)
         self.assertEqual(s.mqtt_host, "broker.local")
         self.assertEqual(s.mqtt_port, 8883)
