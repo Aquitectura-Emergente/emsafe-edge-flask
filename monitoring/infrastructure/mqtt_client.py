@@ -14,7 +14,7 @@ import asyncio
 import logging
 import threading
 from datetime import datetime
-from typing import Awaitable, Callable, Dict, Optional, Sequence
+from typing import Callable, Dict, Optional, Sequence
 
 from monitoring.domain.entities import OutboxMessage
 from monitoring.domain.value_objects import DeviceType
@@ -23,9 +23,6 @@ from shared.clock import Clock
 from shared.config import EdgeSettings
 
 log = logging.getLogger(__name__)
-
-ConfigHandler = Callable[[str, bytes], Awaitable[object]]
-
 
 def _failed(reason_code) -> bool:
     """paho entrega ReasonCode o int según el caso."""
@@ -65,28 +62,23 @@ class MqttGateway:
         self._pending: Dict[int, asyncio.Future] = {}
         self._connected = False
         self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._on_config: Optional[ConfigHandler] = None
         self._on_connected: Optional[Callable[[], None]] = None
-        self._config_topics = {mp.device_config_topic(d): d for d in self._device_ids}
 
     # ---------- Arranque y parada ----------
 
     def start(
         self,
         loop: asyncio.AbstractEventLoop,
-        on_config: ConfigHandler,
         on_connected: Optional[Callable[[], None]] = None,
     ) -> None:
         """Conecta en segundo plano; paho reconecta solo."""
         self._loop = loop
-        self._on_config = on_config
         self._on_connected = on_connected
         client, s = self._client, self._settings
 
         client.on_connect = self._handle_connect
         client.on_disconnect = self._handle_disconnect
         client.on_publish = self._handle_publish
-        client.on_message = self._handle_message
 
         if s.mqtt_username:
             client.username_pw_set(s.mqtt_username, s.mqtt_password)
@@ -186,9 +178,6 @@ class MqttGateway:
             qos=1,
             retain=True,
         )
-        # Con clean_start el broker no recuerda las suscripciones.
-        for topic in self._config_topics:
-            client.subscribe(topic, qos=1)
         if self._on_connected is not None and self._loop is not None:
             self._loop.call_soon_threadsafe(self._on_connected)
 
@@ -207,14 +196,6 @@ class MqttGateway:
         if not acked:
             log.warning("El broker respondió el PUBACK %s con error: %s", mid, reason_code)
         self._resolve(future, acked)
-
-    def _handle_message(self, _client, _userdata, message) -> None:
-        device_id = self._config_topics.get(message.topic)
-        if device_id is None or self._on_config is None or self._loop is None:
-            return
-        asyncio.run_coroutine_threadsafe(
-            self._on_config(device_id, bytes(message.payload)), self._loop
-        )
 
     # ---------- Utilidades ----------
 

@@ -133,10 +133,6 @@ class AlertThresholds:
         if self.caution_ut > self.danger_ut:
             raise ValueError("el umbral de CAUTION no puede superar al de DANGER")
 
-    def with_danger(self, danger_ut: float) -> "AlertThresholds":
-        """Nuevo DANGER (p. ej. desde la nube). Si queda por debajo de CAUTION, CAUTION baja con él."""
-        return AlertThresholds(min(self.caution_ut, float(danger_ut)), danger_ut)
-
 
 class AlertLevel(Enum):
     """Nivel de alerta local, con su mensaje."""

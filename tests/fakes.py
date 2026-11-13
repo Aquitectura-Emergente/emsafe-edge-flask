@@ -5,7 +5,7 @@ import itertools
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List, Optional
 
-from monitoring.domain.entities import DeviceConfig, OutboxMessage, Reading
+from monitoring.domain.entities import OutboxMessage, Reading
 from monitoring.domain.services import BatchPolicy
 from monitoring.domain.value_objects import ReadingIdentity
 
@@ -126,36 +126,6 @@ class FakePublisher:
 def sequential_ids(prefix: str = "msg") -> Callable[[], str]:
     counter = itertools.count(1)
     return lambda: f"{prefix}-{next(counter)}"
-
-
-class FakeConfigStore:
-    def __init__(self) -> None:
-        self.configs: Dict[str, DeviceConfig] = {}
-        self.saves = 0
-
-    def get(self, device_id: str) -> Optional[DeviceConfig]:
-        return self.configs.get(device_id)
-
-    def save(self, config: DeviceConfig) -> None:
-        self.configs[config.device_id] = config
-        self.saves += 1
-
-
-class FakeLink:
-    """Sensor simulado: registra los umbrales escritos por BLE."""
-
-    def __init__(self, connected=(), fail: bool = False) -> None:
-        self.connected = set(connected)
-        self.fail = fail
-        self.writes: List[tuple] = []
-
-    def is_connected(self, device_id: str) -> bool:
-        return device_id in self.connected
-
-    async def write_threshold(self, device_id: str, threshold_ut: float) -> None:
-        if self.fail:
-            raise OSError("escritura BLE fallida")
-        self.writes.append((device_id, threshold_ut))
 
 
 class FakeStatusPublisher:

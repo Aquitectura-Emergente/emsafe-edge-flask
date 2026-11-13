@@ -3,11 +3,8 @@
 Casos de uso reales; solo los bordes (BLE, broker, SQLite) son dobles.
 """
 import asyncio
-import json
 import unittest
-from functools import partial
 
-from monitoring.application.apply_device_config import ApplyDeviceConfigUseCase
 from monitoring.application.control_plug import ControlPlugUseCase
 from monitoring.application.ingest_reading import IngestReadingUseCase
 from monitoring.application.publish_outbox import PublishOutboxUseCase
@@ -17,10 +14,9 @@ from monitoring.domain.services import ReadingFactory
 from monitoring.domain.value_objects import AlertThresholds
 from monitoring.infrastructure.ble_sensor_client import ReadingReceived, SessionStarted
 from monitoring.infrastructure.ble_protocol import RawReading
-from monitoring.infrastructure.mqtt_payloads import parse_device_config
 from monitoring.interfaces.runner import EdgeRunner, build_runner
 from shared.config import EdgeSettings
-from tests.fakes import PUBLISHED, FakeClock, FakeConfigStore, FakeLink, FakeOutbox, sequential_ids
+from tests.fakes import PUBLISHED, FakeClock, FakeOutbox, sequential_ids
 
 DEVICE = "EMSafe-DOS-01"
 TS = 1762959843
@@ -34,11 +30,11 @@ class FakeMqtt:
         self.telemetry = []
         self.statuses = []
         self.started = self.stopped = False
-        self.on_config = self.on_connected = None
+        self.on_connected = None
 
-    def start(self, loop, on_config, on_connected):
+    def start(self, loop, on_connected):
         self.started = True
-        self.on_config, self.on_connected = on_config, on_connected
+        self.on_connected = on_connected
 
     def stop(self):
         self.stopped = True
@@ -80,21 +76,17 @@ def build(readings, connected=True, ingest=None):
     queue, clock, outbox = asyncio.Queue(), FakeClock(), FakeOutbox()
     mqtt = FakeMqtt(connected)
     connectivity = TrackConnectivityUseCase(mqtt, clock)
-    apply_config = ApplyDeviceConfigUseCase(
-        FakeConfigStore(), FakeLink(), partial(parse_device_config, saturation_ut=790.0), 300.0
-    )
     runner = EdgeRunner(
         queue=queue,
         ingest=ingest or IngestReadingUseCase(outbox, ReadingFactory(790.0), clock),
         publish=PublishOutboxUseCase(outbox, mqtt, clock, new_message_id=sequential_ids()),
         purge=PurgeOutboxUseCase(outbox, clock, 7),
         connectivity=connectivity,
-        apply_config=apply_config,
         mqtt=mqtt,
         ble_clients=[FakeBle(queue, connectivity, readings)],
         publish_interval_s=0.01,
     )
-    return runner, outbox, mqtt, apply_config
+    return runner, outbox, mqtt
 
 
 async def wait_until(condition, timeout=2.0):
@@ -112,7 +104,7 @@ class FullCycleTest(unittest.IsolatedAsyncioTestCase):
     async def test_lectura_entra_se_guarda_se_publica_y_queda_marcada(self):
         # Flush típico del firmware: 60 diferidas (con un reenvío) y luego tiempo real.
         readings = raws(60) + raws(5) + raws(2, deferred=0, start=100)
-        runner, outbox, mqtt, _ = build(readings)
+        runner, outbox, mqtt = build(readings)
         task = asyncio.create_task(runner.run())
 
         await wait_until(lambda: len(outbox.entries) == 62 and all(s == PUBLISHED for s in outbox.statuses()))
@@ -125,7 +117,7 @@ class FullCycleTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mqtt.statuses, [(DEVICE, "ONLINE"), (DEVICE, "OFFLINE")])
 
     async def test_sin_broker_acumula_y_publica_al_reconectar(self):
-        runner, outbox, mqtt, _ = build(raws(3, deferred=0), connected=False)
+        runner, outbox, mqtt = build(raws(3, deferred=0), connected=False)
         task = asyncio.create_task(runner.run())
 
         await wait_until(lambda: len(outbox.entries) == 3)
@@ -139,19 +131,6 @@ class FullCycleTest(unittest.IsolatedAsyncioTestCase):
 
         # El estado ONLINE ocurrido sin broker se republica al reconectar.
         self.assertIn((DEVICE, "ONLINE"), mqtt.statuses)
-        runner.stop()
-        await asyncio.wait_for(task, 2)
-
-    async def test_config_de_la_nube_llega_al_caso_de_uso(self):
-        runner, _, mqtt, apply_config = build([])
-        task = asyncio.create_task(runner.run())
-        await wait_until(lambda: mqtt.started)
-
-        raw = json.dumps({"schemaVersion": "1.0", "deviceId": DEVICE,
-                          "configVersion": 1, "alertThresholdUT": 220}).encode()
-        await mqtt.on_config(DEVICE, raw)
-
-        self.assertEqual(apply_config.threshold_for(DEVICE), 220.0)
         runner.stop()
         await asyncio.wait_for(task, 2)
 
@@ -170,7 +149,7 @@ class FullCycleTest(unittest.IsolatedAsyncioTestCase):
                 return None
 
         flaky = FlakyIngest()
-        runner, _, _, _ = build(raws(3), ingest=flaky)
+        runner, _, _ = build(raws(3), ingest=flaky)
         task = asyncio.create_task(runner.run())
 
         with self.assertLogs("monitoring.interfaces.runner", level="ERROR"):
@@ -206,7 +185,7 @@ class PlugWorkerTest(unittest.IsolatedAsyncioTestCase):
             RawReading(seq=1, ts=TS + 1, uT=500.0, deferred=1),
             RawReading(seq=2, ts=TS + 2, uT=250.0, deferred=0),
         ]
-        runner, _, _, _ = build(readings, ingest=ingest)
+        runner, _, _ = build(readings, ingest=ingest)
         runner._control = control
         holder.append(runner)
         task = asyncio.create_task(runner.run())

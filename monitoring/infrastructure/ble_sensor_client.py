@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Awaitable, Callable, Dict, Optional, Protocol
+from typing import Awaitable, Callable, Optional, Protocol
 
 from monitoring.infrastructure import ble_protocol as proto
 from shared.clock import Clock
@@ -96,19 +96,9 @@ class BleSensorClient:
         self._stop_event: Optional[asyncio.Event] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
-    # ---------- SensorLink ----------
-
     @property
     def is_connected(self) -> bool:
         return self._connected
-
-    async def write_threshold(self, threshold_ut: float) -> None:
-        if not self._connected or self._client is None:
-            raise ConnectionError(f"{self.device_name} no está conectado")
-        await self._client.write_gatt_char(
-            proto.THRESHOLD_UUID, proto.encode_threshold(threshold_ut), response=True
-        )
-        log.info("Umbral %.1f µT escrito en %s", threshold_ut, self.device_name)
 
     # ---------- Ciclo de vida ----------
 
@@ -245,26 +235,3 @@ class BleSensorClient:
             loop.call_soon_threadsafe(event.set)
         else:
             event.set()
-
-
-class BleSensorLinks:
-    """`SensorLink` sobre los clientes BLE registrados."""
-
-    def __init__(self) -> None:
-        self._clients: Dict[str, BleSensorClient] = {}
-
-    def register(self, client: BleSensorClient) -> None:
-        self._clients[client.device_name] = client
-
-    def is_connected(self, device_id: str) -> bool:
-        client = self._clients.get(device_id)
-        return client is not None and client.is_connected
-
-    async def write_threshold(self, device_id: str, threshold_ut: float) -> None:
-        client = self._clients.get(device_id)
-        if client is None:
-            raise KeyError(f"{device_id} no está configurado en EMSAFE_DEVICE_NAME")
-        await client.write_threshold(threshold_ut)
-
-    def connected_devices(self):
-        return [name for name, c in self._clients.items() if c.is_connected]

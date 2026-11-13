@@ -3,7 +3,7 @@
 Lee los bloques ```json de la sección "Contrato MQTT" del README.md. Es la
 copia versionada del contrato: `docs/contrato-mqtt.md` queda solo en local y
 el CI no lo tiene. Orden de los bloques en el README:
-  0 telemetría · 1 estado del dispositivo · 2 config · 3 Edge ONLINE · 4 Last Will
+  0 telemetría · 1 estado del dispositivo · 2 Edge ONLINE · 3 Last Will
 
 Si cambias un ejemplo del README o el serializador, cambia el otro: es el
 idioma que comparten el Edge y la ingesta del backend.
@@ -61,8 +61,8 @@ def readme_example_payload():
 
 
 class ReadmeSectionTest(unittest.TestCase):
-    def test_la_seccion_tiene_los_cinco_ejemplos(self):
-        self.assertEqual(len(contract_examples()), 5)
+    def test_la_seccion_tiene_los_cuatro_ejemplos(self):
+        self.assertEqual(len(contract_examples()), 4)
 
 
 class TelemetryContractTest(unittest.TestCase):
@@ -118,31 +118,18 @@ class StatusContractTest(unittest.TestCase):
             mp.device_status_payload("D", "E", "MAYBE", utc(2026, 1, 1))
 
     def test_edge_online_identico_al_readme(self):
-        self.assertEqual(mp.edge_online_payload(utc(2026, 11, 12, 15, 0, 0)), contract_examples()[3])
+        self.assertEqual(mp.edge_online_payload(utc(2026, 11, 12, 15, 0, 0)), contract_examples()[2])
 
     def test_last_will_identico_al_readme_y_sin_changed_at(self):
         lwt = mp.edge_last_will_payload()
-        self.assertEqual(lwt, contract_examples()[4])
+        self.assertEqual(lwt, contract_examples()[3])
         self.assertNotIn("changedAt", lwt)
-
-
-class ConfigContractTest(unittest.TestCase):
-    def test_el_ejemplo_de_config_del_readme_se_interpreta(self):
-        raw = json.dumps(contract_examples()[2]).encode("utf-8")
-
-        config = mp.parse_device_config("EMSafe-DOS-01", raw, saturation_ut=790.0)
-
-        self.assertEqual(config.config_version, 3)
-        self.assertEqual(config.alert_threshold_ut, 300.0)
-        self.assertEqual(config.defined_by, "SSO_RESPONSIBLE")
-        self.assertEqual(config.updated_at, utc(2026, 11, 12, 14, 0, 0))
 
 
 class TopicsTest(unittest.TestCase):
     def test_topicos_del_contrato(self):
         self.assertEqual(mp.telemetry_topic("EMSafe-DOS-01"), "iot/EMSafe-DOS-01/telemetry")
         self.assertEqual(mp.device_status_topic("EMSafe-DOS-01"), "iot/EMSafe-DOS-01/status")
-        self.assertEqual(mp.device_config_topic("EMSafe-DOS-01"), "iot/EMSafe-DOS-01/config")
         self.assertEqual(mp.edge_status_topic("EDGE-HOGAR-01"), "edge/EDGE-HOGAR-01/status")
 
 

@@ -11,7 +11,6 @@ import unittest
 from monitoring.infrastructure import ble_protocol as proto
 from monitoring.infrastructure.ble_sensor_client import (
     BleSensorClient,
-    BleSensorLinks,
     ReadingReceived,
     SessionStarted,
 )
@@ -262,32 +261,6 @@ class StopTest(unittest.IsolatedAsyncioTestCase):
         await h.ble.stop()
         await asyncio.wait_for(h.ble.run(), 0.5)
         self.assertEqual(h.clients, [])
-
-
-class LinkTest(unittest.IsolatedAsyncioTestCase):
-    async def test_escribe_el_umbral_en_caliente_solo_si_esta_conectado(self):
-        h = Harness()
-        links = BleSensorLinks()
-        links.register(h.ble)
-        self.assertFalse(links.is_connected(DEVICE))
-        with self.assertRaises(ConnectionError):
-            await links.write_threshold(DEVICE, 200.0)
-
-        task = asyncio.create_task(h.ble.run())
-        await wait_until(lambda: h.ble.is_connected)
-        await links.write_threshold(DEVICE, 200.0)
-
-        self.assertTrue(links.is_connected(DEVICE))
-        self.assertEqual(links.connected_devices(), [DEVICE])
-        self.assertEqual(h.clients[0].calls[-1],
-                         ("write", proto.THRESHOLD_UUID, struct.pack("<f", 200.0), True))
-        await h.ble.stop()
-        await asyncio.wait_for(task, 1)
-
-    async def test_dispositivo_no_configurado(self):
-        self.assertFalse(BleSensorLinks().is_connected("X"))
-        with self.assertRaises(KeyError):
-            await BleSensorLinks().write_threshold("X", 200.0)
 
 
 if __name__ == "__main__":

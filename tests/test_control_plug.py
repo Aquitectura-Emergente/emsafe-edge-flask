@@ -91,10 +91,10 @@ class AutoCutoffTest(unittest.TestCase):
         self.assertEqual(use_case.evaluate(r(49)), "ON")
         self.assertEqual(use_case.restore_threshold(DEVICE), 50)
 
-    def test_restablecimiento_sigue_al_danger_vigente(self):
+    def test_restablecimiento_por_defecto_es_el_80_por_ciento_de_danger(self):
         use_case, _, _, _ = build(thresholds=AlertThresholds(100, 300))
         self.assertAlmostEqual(use_case.restore_threshold(DEVICE), 240.0)
-        # Un EMSAFE_RESTORE_UT que ya no queda bajo DANGER se reemplaza por el 80 %.
+        # Un umbral de restablecimiento que no queda bajo DANGER se reemplaza por el 80 %.
         use_case, _, _, _ = build(thresholds=AlertThresholds(50, 100), restore_ut=150)
         self.assertAlmostEqual(use_case.restore_threshold(DEVICE), 80.0)
 

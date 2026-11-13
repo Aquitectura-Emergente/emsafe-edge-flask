@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Callable, List, Optional, Protocol
 
-from monitoring.domain.entities import DeviceConfig, OutboxMessage, Reading
+from monitoring.domain.entities import OutboxMessage, Reading
 from monitoring.domain.services import BatchPolicy
 from monitoring.domain.value_objects import ReadingIdentity
 from shared.clock import Clock  # noqa: F401  (reexportado como puerto)
@@ -72,27 +72,6 @@ class StatusPublisher(Protocol):
     """
 
     def publish_device_status(self, device_id: str, connectivity: str, changed_at: datetime) -> bool:
-        ...
-
-
-class ConfigStore(Protocol):
-    """Última configuración válida de cada sensor."""
-
-    def get(self, device_id: str) -> Optional[DeviceConfig]:
-        ...
-
-    def save(self, config: DeviceConfig) -> None:
-        ...
-
-
-class SensorLink(Protocol):
-    """Canal BLE para escribir el umbral en el sensor conectado."""
-
-    def is_connected(self, device_id: str) -> bool:
-        ...
-
-    async def write_threshold(self, device_id: str, threshold_ut: float) -> None:
-        """Lanza una excepción si la escritura falla."""
         ...
 
 

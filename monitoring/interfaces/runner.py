@@ -6,10 +6,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from functools import partial
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
-from monitoring.application.apply_device_config import ApplyDeviceConfigUseCase
 from monitoring.application.control_plug import ControlPlugUseCase
 from monitoring.application.ingest_reading import IngestReadingUseCase, IngestResult
 from monitoring.application.publish_outbox import PublishOutboxUseCase
@@ -30,7 +28,6 @@ class EdgeRunner:
         publish: PublishOutboxUseCase,
         purge: PurgeOutboxUseCase,
         connectivity: TrackConnectivityUseCase,
-        apply_config: ApplyDeviceConfigUseCase,
         mqtt,
         ble_clients: Sequence,
         control: Optional[ControlPlugUseCase] = None,
@@ -45,7 +42,6 @@ class EdgeRunner:
         self._publish = publish
         self._purge = purge
         self._connectivity = connectivity
-        self._apply_config = apply_config
         self._mqtt = mqtt
         self._ble_clients = list(ble_clients)
         self._control = control
@@ -97,7 +93,7 @@ class EdgeRunner:
         self._stop = asyncio.Event()
         self._wake = asyncio.Event()
         self._plug_queue = asyncio.Queue()
-        self._mqtt.start(loop, self._apply_config.on_config_message, self._on_broker_connected)
+        self._mqtt.start(loop, self._on_broker_connected)
 
         ble_tasks = [
             asyncio.create_task(c.run(), name=f"ble:{c.device_name}") for c in self._ble_clients
@@ -208,11 +204,9 @@ def build_runner(settings) -> EdgeRunner:
     from monitoring.domain.services import BatchPolicy, ReadingFactory
     from monitoring.domain.value_objects import AlertThresholds
     from monitoring.infrastructure.backend_desired_plug import BackendDesiredPlugSource
-    from monitoring.infrastructure.ble_sensor_client import BleSensorClient, BleSensorLinks
+    from monitoring.infrastructure.ble_sensor_client import BleSensorClient
     from monitoring.infrastructure.http_actuator import HttpActuatorGateway
     from monitoring.infrastructure.mqtt_client import MqttGateway
-    from monitoring.infrastructure.mqtt_payloads import parse_device_config
-    from monitoring.infrastructure.sqlite_config_store import SqliteConfigStore
     from monitoring.infrastructure.sqlite_outbox import SqliteReadingOutbox
     from shared.clock import SystemClock
     from shared.database import init_db
@@ -222,19 +216,15 @@ def build_runner(settings) -> EdgeRunner:
     outbox = SqliteReadingOutbox()
     queue: asyncio.Queue = asyncio.Queue()
     mqtt = MqttGateway(settings, clock, settings.device_names)
-    links = BleSensorLinks()
     connectivity = TrackConnectivityUseCase(mqtt, clock)
-    # El umbral de DANGER se escribe en el sensor; la config de la nube lo reemplaza.
-    apply_config = ApplyDeviceConfigUseCase(
-        SqliteConfigStore(),
-        links,
-        partial(parse_device_config, saturation_ut=settings.saturation_ut),
-        settings.danger_ut,
-    )
-    base = AlertThresholds(settings.caution_ut, settings.danger_ut)
+    thresholds = AlertThresholds(settings.caution_ut, settings.danger_ut)
 
-    def thresholds_for(device_id: str) -> AlertThresholds:
-        return base.with_danger(apply_config.threshold_for(device_id))
+    def thresholds_for(_device_id: str) -> AlertThresholds:
+        return thresholds
+
+    # El sensor recibe el umbral de DANGER: su alarma local coincide con el corte.
+    def sensor_threshold(_device_id: str) -> float:
+        return thresholds.danger_ut
 
     if not settings.actuator_url:
         log.warning("EMSAFE_ACTUATOR_URL vacío: el enchufe no se controla")
@@ -248,9 +238,7 @@ def build_runner(settings) -> EdgeRunner:
     )
     ble_clients = []
     for name in settings.device_names:
-        client = BleSensorClient(name, queue, apply_config.threshold_for, connectivity, clock)
-        links.register(client)
-        ble_clients.append(client)
+        ble_clients.append(BleSensorClient(name, queue, sensor_threshold, connectivity, clock))
 
     runner_ref: List[EdgeRunner] = []
     ingest = IngestReadingUseCase(
@@ -266,7 +254,6 @@ def build_runner(settings) -> EdgeRunner:
         publish=PublishOutboxUseCase(outbox, mqtt, clock, BatchPolicy()),
         purge=PurgeOutboxUseCase(outbox, clock, settings.outbox_retention_days),
         connectivity=connectivity,
-        apply_config=apply_config,
         mqtt=mqtt,
         ble_clients=ble_clients,
         control=control,

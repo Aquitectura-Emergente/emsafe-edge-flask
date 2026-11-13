@@ -7,8 +7,7 @@ controla el **enchufe inteligente** y publica la telemetría por **MQTT** hacia 
 
 ```
 Sensor fijo (ESP32 #1) --BLE--> Edge hogar --HTTP/WiFi--> Actuador (ESP32 #2 + relé)
-                                    |    ^
-                                    |    +-- config (umbral) <-- Device Management
+                                    |
                                     +--MQTT--> Broker --> Ingesta Device Management
 ```
 
@@ -48,14 +47,14 @@ así los tests reemplazan BLE, broker, actuador y SQLite por dobles.
 
 ```text
 monitoring/
-  domain/          Reading, OutboxMessage, DeviceConfig, value objects (ReadingIdentity,
+  domain/          Reading, OutboxMessage, value objects (ReadingIdentity,
                    MagneticFluxDensity, SyncOrigin, ReadingQuality, CapturedAtSource,
                    AlertLevel, AlertThresholds), ReadingFactory, BatchPolicy y los puertos
-  application/     ingest_reading, control_plug, publish_outbox, apply_device_config,
-                   track_connectivity, purge_outbox
+  application/     ingest_reading, control_plug, publish_outbox, track_connectivity,
+                   purge_outbox
   infrastructure/  ble_protocol (bytes <-> datos, sin bleak), ble_sensor_client (bleak),
                    mqtt_payloads (esquema 1.0), mqtt_client (paho), models, sqlite_outbox,
-                   sqlite_config_store, http_actuator, backend_desired_plug
+                   http_actuator, backend_desired_plug
   interfaces/      runner (arma y orquesta el Edge), edge_thread (loop asyncio en un hilo),
                    api (Flask)
 shared/            config (variables de entorno), database (SQLite en modo WAL), clock
@@ -97,7 +96,7 @@ notificación BLE ──> cola asyncio ──> IngestReading ──> outbox SQLi
 | Regla | Detalle |
 |---|---|
 | Clasificación | SAFE por debajo de `EMSAFE_CAUTION_UT`, CAUTION desde ahí y DANGER desde `EMSAFE_DANGER_UT` (inclusivos por abajo). Una lectura `SATURATED` es DANGER. |
-| Umbral del sensor | Al conectar se escribe el de DANGER, así el LED y el buzzer coinciden con el corte. Si llega `iot/{deviceId}/config`, su `alertThresholdUT` reemplaza a DANGER y se escribe en caliente. Si queda por debajo de CAUTION, CAUTION baja con él. |
+| Umbral del sensor | Al conectar se escribe el de DANGER (`EMSAFE_DANGER_UT`), así el LED y el buzzer coinciden con el corte. Los umbrales del hogar son fijos: solo vienen de `EMSAFE_CAUTION_UT` y `EMSAFE_DANGER_UT`. |
 | Corte (US04) | Lectura **en tiempo real** en DANGER → `GET /off`. |
 | Restablecimiento | Cuando el campo baja de `EMSAFE_RESTORE_UT` (80 % de DANGER por defecto) → `GET /on`, solo si el corte lo hizo la lógica automática. |
 | Diferidas | Solo se registran y se publican: describen el pasado y nunca accionan el relé. |
@@ -130,15 +129,13 @@ Preparación desde cero en Windows.
 
 ### MQTT Explorer (opcional, recomendado)
 
-Cliente gráfico para ver lo que publica el Edge y publicar la config sin pelear con las comillas.
+Cliente gráfico para ver lo que publica el Edge y publicar mensajes sin pelear con las comillas.
 
 1. Descárgalo desde [mqtt-explorer.com](https://mqtt-explorer.com/) o desde Microsoft Store.
 2. Crea una conexión con host `localhost`, puerto `1883`, sin usuario ni contraseña y con
    *Encryption (tls)* desactivado. Conéctate.
 3. **Ver la telemetría:** en el árbol abre `iot → EMSafe-DOS-01 → telemetry`.
-4. **Publicar la config:** en *Publish* escribe el tópico `iot/EMSafe-DOS-01/config`, elige el
-   formato `json`, pega el payload (ver [Umbral desde la nube](#umbral-desde-la-nube)), marca
-   **retain**, elige QoS 1 y pulsa *Publish*.
+
 
 ### Arduino IDE y placas
 
@@ -209,14 +206,13 @@ el arranque con un mensaje que nombra la variable.
 | `EMSAFE_MQTT_HOST` / `EMSAFE_MQTT_PORT` | Broker MQTT | `localhost` / `1883` |
 | `EMSAFE_MQTT_TLS` | Activa TLS (`true`/`false`) | `false` |
 | `EMSAFE_MQTT_USERNAME` / `EMSAFE_MQTT_PASSWORD` | Credenciales del nodo | vacío |
-| `EMSAFE_DB_PATH` | Archivo SQLite del outbox y la config | `emsafe_edge.db` |
+| `EMSAFE_DB_PATH` | Archivo SQLite del outbox | `emsafe_edge.db` |
 | `EMSAFE_OUTBOX_RETENTION_DAYS` | Días que se conservan las lecturas ya publicadas (mínimo 1) | `7` |
 | `EMSAFE_HTTP_HOST` | Interfaz donde escucha la API local. `0.0.0.0` la abre a la red | `127.0.0.1` |
 | `EMSAFE_LOG_LEVEL` | Nivel de log (`DEBUG`, `INFO`, `WARNING`…) | `INFO` |
 | `EMSAFE_EDGE_DEBUG` | Debug de Flask. Solo para depurar: expone la consola de Werkzeug a la red | `false` |
 
-Se exige `0 < CAUTION ≤ DANGER < SATURATION` y `0 < RESTORE < DANGER`. Si una config de la nube
-baja DANGER por debajo de `EMSAFE_RESTORE_UT`, se usa el 80 % del nuevo DANGER.
+Se exige `0 < CAUTION ≤ DANGER < SATURATION` y `0 < RESTORE < DANGER`.
 
 ## Ejecución
 
@@ -302,23 +298,6 @@ imanes, o con uno que gira, los campos se pueden restar y la lectura puede *baja
 6. **Diferidas:** apaga el Edge, acerca el imán unos segundos y aléjalo, y vuelve a arrancar. Las
    lecturas en DANGER llegan como `DEFERRED` y no accionan el relé.
 
-### Umbral desde la nube
-
-Publica la config con **MQTT Explorer** o con **cmd**. No uses PowerShell: altera las comillas del
-JSON al pasarlo a `mosquitto_pub` y el Edge recibe un JSON roto.
-
-En **cmd**:
-
-```bat
-mosquitto_pub -r -q 1 -t iot/EMSafe-DOS-01/config -m "{\"schemaVersion\":\"1.0\",\"deviceId\":\"EMSafe-DOS-01\",\"configVersion\":1,\"alertThresholdUT\":300.0,\"definedBy\":\"SSO_RESPONSIBLE\",\"updatedAt\":\"2026-11-12T14:00:00Z\"}"
-```
-
-El log muestra `Config de EMSafe-DOS-01 aplicada` y `Umbral 300.0 µT escrito en EMSafe-DOS-01`.
-Desde ahí DANGER (alarma local y corte) es 300 µT y el restablecimiento 240 µT; `/health` muestra
-los umbrales nuevos. Reenviar el mismo `configVersion` se ignora; `alertThresholdUT` 800 se rechaza.
-Para volver a `EMSAFE_DANGER_UT` borra el retained (`mosquitto_pub -r -t iot/EMSafe-DOS-01/config -n`)
-**y** la fila guardada en `device_configs`, o usa otro `EMSAFE_DB_PATH`.
-
 ### Corte de nube y de BLE
 
 - Detén *Mosquitto Broker* (`net stop mosquitto` en un cmd de administrador): el Edge sigue
@@ -388,7 +367,6 @@ no viaja en estos mensajes.
 |---|---|---|---|---|---|
 | `iot/{deviceId}/telemetry` | Edge → nube | 1 | No | Edge | Ingesta (`MqttTelemetrySubscriber`) |
 | `iot/{deviceId}/status` *(propuesto)* | Edge → nube | 1 | Sí | Edge | Ingesta (conectividad del dispositivo) |
-| `iot/{deviceId}/config` *(propuesto)* | Nube → Edge | 1 | Sí | Device Management | Edge |
 | `edge/{edgeNodeId}/status` *(propuesto)* | Edge → nube | 1 | Sí (LWT) | Edge / broker | Ingesta (monitoreo de nodos) |
 
 `deviceId` es el identificador del dispositivo registrado en Device Management (prototipo:
@@ -488,28 +466,6 @@ Lo publica el Edge al conectar o perder el BLE con el sensor.
 
 `connectivity`: `ONLINE` \| `OFFLINE`. `firmwareVersion` y `batteryLevel` van en `null` hasta que
 el firmware los exponga por BLE.
-
-### Configuración del dispositivo — `iot/{deviceId}/config` (retained)
-
-La publica Device Management al registrar el dispositivo o cuando cambia el umbral. En el hogar,
-`alertThresholdUT` reemplaza al umbral de DANGER del espacio, que también decide el corte del
-enchufe. El Edge la guarda y la escribe en el sensor por BLE al conectar y cuando cambia.
-
-```json
-{
-  "schemaVersion": "1.0",
-  "deviceId": "EMSafe-DOS-01",
-  "configVersion": 3,
-  "alertThresholdUT": 300.0,
-  "definedBy": "SSO_RESPONSIBLE",
-  "updatedAt": "2026-11-12T14:00:00Z"
-}
-```
-
-- Se ignora una configuración con `configVersion` menor o igual a la vigente.
-- También se rechaza, con un registro en el log, si `alertThresholdUT` no es numérico, es ≤ 0 o es
-  ≥ `EMSAFE_SATURATION_UT`. En ese caso se conserva la última válida.
-- Sin configuración, el Edge usa `EMSAFE_DANGER_UT` (200 µT por defecto).
 
 ### Estado del nodo Edge — `edge/{edgeNodeId}/status` (retained, Last Will)
 

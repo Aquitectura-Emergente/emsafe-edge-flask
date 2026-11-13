@@ -1,10 +1,9 @@
-"""Entidades: lectura, mensaje del outbox y configuración del sensor."""
+"""Entidades: lectura y mensaje del outbox."""
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional, Tuple
+from typing import Tuple
 
 from monitoring.domain.value_objects import (
     AlertLevel,
@@ -92,65 +91,3 @@ class OutboxMessage:
     @property
     def origin(self) -> SyncOrigin:
         return self.readings[0].origin
-
-
-class InvalidDeviceConfig(ValueError):
-    """La configuración recibida de la nube no es aplicable al sensor."""
-
-
-@dataclass(frozen=True)
-class DeviceConfig:
-    """Configuración del sensor. Su umbral reemplaza al de DANGER del espacio.
-
-    Se exige 0 < umbral < saturación: el firmware acepta cualquier valor
-    positivo, pero un umbral desde la saturación en adelante nunca se dispararía.
-    """
-
-    device_id: str
-    config_version: int
-    alert_threshold_ut: float
-    defined_by: str = "SSO_RESPONSIBLE"
-    updated_at: Optional[datetime] = None
-
-    @classmethod
-    def create(
-        cls,
-        device_id: str,
-        config_version,
-        alert_threshold_ut,
-        saturation_ut: float,
-        defined_by: str = "SSO_RESPONSIBLE",
-        updated_at: Optional[datetime] = None,
-    ) -> "DeviceConfig":
-        if not isinstance(device_id, str) or not device_id.strip():
-            raise InvalidDeviceConfig("deviceId vacío")
-        if (
-            isinstance(config_version, bool)
-            or not isinstance(config_version, int)
-            or config_version < 0
-        ):
-            raise InvalidDeviceConfig(f"configVersion inválida: {config_version!r}")
-        if isinstance(alert_threshold_ut, bool) or not isinstance(alert_threshold_ut, (int, float)):
-            raise InvalidDeviceConfig(f"alertThresholdUT no numérico: {alert_threshold_ut!r}")
-        threshold = float(alert_threshold_ut)
-        if math.isnan(threshold) or math.isinf(threshold):
-            raise InvalidDeviceConfig(f"alertThresholdUT no finito: {alert_threshold_ut!r}")
-        if not 0 < threshold < saturation_ut:
-            raise InvalidDeviceConfig(
-                f"alertThresholdUT {threshold} fuera de rango: debe ser > 0 y < {saturation_ut} "
-                "(saturación del sensor)"
-            )
-        if updated_at is not None:
-            try:
-                _require_utc("updatedAt", updated_at)
-            except ValueError as exc:
-                raise InvalidDeviceConfig(str(exc))
-        return cls(device_id, config_version, threshold, defined_by, updated_at)
-
-    def supersedes(self, current: Optional["DeviceConfig"]) -> bool:
-        """True si reemplaza a la vigente (retained y QoS 1 pueden repetirse o desordenarse)."""
-        if current is None:
-            return True
-        if current.device_id != self.device_id:
-            raise ValueError("no se comparan configuraciones de dispositivos distintos")
-        return self.config_version > current.config_version

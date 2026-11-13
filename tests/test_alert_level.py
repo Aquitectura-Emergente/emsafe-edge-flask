@@ -51,11 +51,6 @@ class ThresholdsTest(unittest.TestCase):
     def test_caution_igual_a_danger_se_permite(self):
         self.assertIs(level(150, AlertThresholds(150, 150)), AlertLevel.DANGER)
 
-    def test_nuevo_danger_desde_la_nube(self):
-        self.assertEqual(AlertThresholds(100, 200).with_danger(300), AlertThresholds(100, 300))
-        # Un DANGER por debajo de CAUTION arrastra a CAUTION.
-        self.assertEqual(AlertThresholds(100, 200).with_danger(60), AlertThresholds(60, 60))
-
 
 class FactoryAndIngestTest(unittest.TestCase):
     def test_la_fabrica_clasifica_con_los_umbrales_dados(self):

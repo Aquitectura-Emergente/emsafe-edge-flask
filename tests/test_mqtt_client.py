@@ -1,4 +1,4 @@
-"""Adaptador MQTT: LWT, PUBACK → futuro, desconexión, suscripción y config.
+"""Adaptador MQTT: LWT, PUBACK → futuro, desconexión y estados.
 
 Sin broker: `FakePahoClient` registra las llamadas y el test dispara los
 callbacks de paho a mano (incluso desde otro hilo, como hace paho).
@@ -88,18 +88,14 @@ def message():
 class GatewayTestCase(unittest.IsolatedAsyncioTestCase):
     def make(self, **env):
         self.paho = FakePahoClient()
-        self.configs = []
         self.connected_calls = 0
         settings = EdgeSettings.from_env(env)
         self.gateway = MqttGateway(settings, FakeClock(), [DEVICE], client_factory=lambda s: self.paho)
 
-        async def on_config(device_id, raw):
-            self.configs.append((device_id, raw))
-
         def on_connected():
             self.connected_calls += 1
 
-        self.gateway.start(asyncio.get_running_loop(), on_config, on_connected)
+        self.gateway.start(asyncio.get_running_loop(), on_connected)
         return self.gateway
 
     def connect(self):
@@ -128,7 +124,7 @@ class StartTest(GatewayTestCase):
 
 
 class ConnectTest(GatewayTestCase):
-    async def test_al_conectar_publica_online_se_suscribe_y_avisa(self):
+    async def test_al_conectar_publica_online_y_avisa(self):
         self.make()
         self.connect()
         await asyncio.sleep(0)
@@ -137,7 +133,6 @@ class ConnectTest(GatewayTestCase):
         topic, payload, qos, retain, _ = self.paho.published[0]
         self.assertEqual((topic, qos, retain), ("edge/EDGE-HOGAR-01/status", 1, True))
         self.assertEqual(payload, {"status": "ONLINE", "changedAt": "2026-11-12T15:04:04Z"})
-        self.assertEqual(self.paho.subscribed, [("iot/EMSafe-DOS-01/config", 1)])
         self.assertEqual(self.connected_calls, 1)
 
     async def test_conexion_rechazada_no_marca_conectado(self):
@@ -225,27 +220,6 @@ class DeviceStatusTest(GatewayTestCase):
     async def test_sin_conexion_devuelve_false(self):
         self.make()
         self.assertFalse(self.gateway.publish_device_status(DEVICE, "ONLINE", T0))
-
-
-class ConfigMessageTest(GatewayTestCase):
-    async def test_mensaje_de_config_llega_al_loop(self):
-        self.make()
-        self.connect()
-
-        t = threading.Thread(target=self.gateway._handle_message,
-                             args=(self.paho, None, FakeMessage("iot/EMSafe-DOS-01/config", b'{"x":1}')))
-        t.start()
-        t.join()
-        for _ in range(10):
-            await asyncio.sleep(0.001)
-
-        self.assertEqual(self.configs, [(DEVICE, b'{"x":1}')])
-
-    async def test_topico_ajeno_se_ignora(self):
-        self.make()
-        self.gateway._handle_message(self.paho, None, FakeMessage("iot/OTRO/config", b"{}"))
-        await asyncio.sleep(0.01)
-        self.assertEqual(self.configs, [])
 
 
 class StopTest(GatewayTestCase):

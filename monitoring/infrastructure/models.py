@@ -1,4 +1,4 @@
-"""Modelos ORM (Peewee) del outbox local."""
+"""Modelo ORM (Peewee) del outbox local."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -65,18 +65,4 @@ class ReadingRow(Model):
         indexes = ((("device_id", "sequence", "device_ts"), True),)
 
 
-class DeviceConfigRow(Model):
-    """Última config válida del sensor, para escribir el umbral aunque no haya broker."""
-
-    device_id = CharField(primary_key=True)
-    config_version = IntegerField()
-    alert_threshold_ut = FloatField()
-    defined_by = CharField()
-    updated_at = UtcDateTimeField(null=True)
-
-    class Meta:
-        database = db
-        table_name = "device_configs"
-
-
-ALL_MODELS = [ReadingRow, DeviceConfigRow]
+ALL_MODELS = [ReadingRow]

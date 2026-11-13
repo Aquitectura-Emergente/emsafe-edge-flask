@@ -1,4 +1,4 @@
-"""Base SQLite local (outbox y configuración).
+"""Base SQLite local del outbox.
 
 `db` es un proxy: la base real se elige al arrancar con `init_db(path)`.
 No hay migraciones; si el esquema cambia se borra el archivo, y solo se
