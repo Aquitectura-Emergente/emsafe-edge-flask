@@ -28,7 +28,7 @@ jobs:
       # Python no compila al arrancar: sin esto, un error de sintaxis en un
       # modulo que solo se importa bajo demanda no aparece hasta produccion.
       - name: Compilar todos los modulos
-        run: python -m compileall -q app.py monitoring shared tests
+        run: python -m compileall -q app.py monitoring shared tests tools
 
       # Sin dependencias de desarrollo: unittest viene en la libreria estandar.
       # -b silencia los print del edge salvo que un test falle.

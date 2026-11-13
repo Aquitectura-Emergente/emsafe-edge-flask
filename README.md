@@ -284,26 +284,42 @@ $env:EMSAFE_ACTUATOR_URL = "http://172.20.10.5"
 
 ### Orden del usuario
 
-La app publica la orden en `iot/EMSafe-PLUG-01/command`. Para simularla usa **MQTT Explorer**: en
-*Publish* escribe el tópico `iot/EMSafe-PLUG-01/command`, elige el formato `json`, QoS 1, **sin**
-retain, y pega:
+La app publica la orden en `iot/EMSafe-PLUG-01/command`. La forma más fácil de simularla es el
+script `tools/send_plug_command.py`: genera un `commandId` nuevo y `requestedAt` con la hora UTC
+actual, publica con QoS 1 y espera la confirmación del broker. Desde la raíz del repo, en otra
+terminal:
+
+```powershell
+.\.venv\Scripts\python.exe tools\send_plug_command.py OFF
+.\.venv\Scripts\python.exe tools\send_plug_command.py ON
+```
+
+Usa el mismo broker y el mismo `plugId` que el Edge (`EMSAFE_MQTT_HOST`, `EMSAFE_PLUG_ID`…), o
+se pueden indicar con `--host`, `--port` y `--plug-id`. Imprime el tópico y el JSON publicado.
+
+1. Envía `OFF`: la lámpara se apaga, el log muestra `Enchufe OFF: orden del usuario <commandId>`
+   y en la terminal 1 aparece `iot/EMSafe-PLUG-01/state` con `"state":"OFF"`, ese `commandId` y
+   `"source":"USER"`.
+2. Envía `ON`: la lámpara vuelve.
+3. **Actuador caído:** desenchúfalo y envía una orden. El log registra `Actuador sin respuesta` y
+   `Orden ... sin efecto`, y se publica el estado anterior con el `commandId` de la orden.
+
+**Alternativa: MQTT Explorer.** Sirve para probar los casos que el script no genera (una orden
+repetida o vieja). En *Publish* escribe el tópico `iot/EMSafe-PLUG-01/command` **sin espacios**
+(un espacio al inicio o al final crea otro tópico y el Edge no recibe nada), elige el formato
+`json`, QoS 1, **sin** retain, y pega:
 
 ```text
 {"schemaVersion":"1.0","commandId":"cmd-001","plugId":"EMSafe-PLUG-01","action":"OFF","requestedBy":"USER","requestedAt":"2026-11-13T15:10:00Z"}
 ```
 
-Antes de publicar, pon en `requestedAt` la hora UTC actual (Perú es UTC−5: 10:10 local son 15:10
-UTC). Una orden con más de 60 s de diferencia se ignora.
+`requestedAt` debe ser la hora **UTC** (no la local) y estar dentro de los **60 segundos**
+anteriores al envío: cámbiala justo antes de publicar. Fuera de esa ventana la orden se ignora con
+una advertencia en el log.
 
-1. Publica la orden `OFF`: la lámpara se apaga, el log muestra `Enchufe OFF: orden del usuario
-   cmd-001` y en la terminal 1 aparece `iot/EMSafe-PLUG-01/state` con `"state":"OFF"`,
-   `"commandId":"cmd-001"` y `"source":"USER"`.
-2. Publica **el mismo** mensaje otra vez: el log dice `Orden cmd-001 repetida` y no pasa nada.
-3. Cambia `commandId` a `cmd-002`, `action` a `ON` y actualiza `requestedAt`: la lámpara vuelve.
-4. Publica una orden con un `requestedAt` de hace unos minutos: se ignora con una advertencia.
-5. **Actuador caído:** desenchúfalo y publica una orden nueva. El log registra `Actuador sin
-   respuesta` y `Orden ... sin efecto`, y se publica el estado anterior con el `commandId` de la
-   orden.
+- Publica **el mismo** mensaje dos veces: la segunda vez el log dice `Orden cmd-001 repetida` y no
+  pasa nada.
+- Publica una orden con un `requestedAt` de hace unos minutos: se ignora.
 
 ### Corte automático (opcional)
 
@@ -362,7 +378,7 @@ se pueden restar y la lectura puede *bajar* al acercarlo.
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -b
-.\.venv\Scripts\python.exe -m compileall -q app.py monitoring shared tests
+.\.venv\Scripts\python.exe -m compileall -q app.py monitoring shared tests tools
 ```
 
 Los tests usan dobles y SQLite en memoria, sin BLE, broker ni red. Cubren el dominio, la
