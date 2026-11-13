@@ -162,8 +162,15 @@ Abre `firmware/emsafe_dosimetro/emsafe_dosimetro.ino` y pulsa *Upload*. En el *S
 
 1. Activa el **hotspot del celular en 2.4 GHz**: el ESP32 no se conecta a redes de 5 GHz. En
    iPhone, activa *Maximizar compatibilidad* en *Compartir Internet*.
-2. En `firmware/actuador_emsafe/actuador_emsafe.ino` cambia `SSID` y `PASS` por los de tu
-   hotspot. El relé va en el GPIO 26, alimentado a 3V3 (módulo activo en LOW).
+2. Crea `firmware/actuador_emsafe/secrets.h` copiando `secrets.example.h` en la misma carpeta, y
+   reemplaza `TU_RED` y `TU_CLAVE` por el nombre y la clave de tu hotspot. En cmd:
+
+   ```bat
+   copy firmwarectuador_emsafe\secrets.example.h firmwarectuador_emsafe\secrets.h
+   ```
+
+   `secrets.h` está en `.gitignore` y no se versiona. Sin él, el sketch no compila. El relé va en
+   el GPIO 26, alimentado a 3V3 (módulo activo en LOW).
 3. Pulsa *Upload* y abre el *Serial Monitor* (115200). Al conectarse muestra
    `IP del actuador: 172.20.10.x`. Esa es la URL base: `http://172.20.10.x`.
 4. Conecta la laptop al mismo hotspot y prueba en el navegador `http://172.20.10.x/off` y

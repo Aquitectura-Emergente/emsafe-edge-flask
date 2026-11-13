@@ -12,5 +12,7 @@ Los dos sketches actuales usan solo librerías del paquete **esp32** de Espressi
 El contrato BLE del sensor está en `monitoring/infrastructure/ble_protocol.py` y no debe
 cambiarse sin actualizar los dos Edge.
 
-Antes de cargar el actuador, cambia `SSID` y `PASS` por los de tu hotspot de 2.4 GHz. Los pasos
-completos están en el README principal, en *Requisitos*.
+Antes de cargar el actuador, crea `actuador_emsafe/secrets.h` copiando `secrets.example.h` y pon el
+nombre y la clave de tu hotspot de 2.4 GHz en lugar de `TU_RED` y `TU_CLAVE`. `secrets.h` está en
+`.gitignore`: las credenciales no se versionan. Los pasos completos están en el README principal,
+en *Requisitos*.

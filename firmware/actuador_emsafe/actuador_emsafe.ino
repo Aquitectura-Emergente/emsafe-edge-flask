@@ -2,8 +2,8 @@
 #include <WiFi.h>
 #include <WebServer.h>
 
-const char* SSID = "iPhone de Carlos";
-const char* PASS = "contraseniai18n";
+#include "secrets.h"   // WIFI_SSID y WIFI_PASS; copiar de secrets.example.h
+
 const int PIN_RELAY = 26;
 
 WebServer server(80);
@@ -17,7 +17,7 @@ void setup() {
   pinMode(PIN_RELAY, OUTPUT);
   relayOff();                              // dispositivo encendido al iniciar
 
-  WiFi.begin(SSID, PASS);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
   Serial.print("Conectando a WiFi");
   while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
   Serial.printf("\nIP del actuador: %s\n", WiFi.localIP().toString().c_str());
