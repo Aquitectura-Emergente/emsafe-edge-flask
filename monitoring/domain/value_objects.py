@@ -1,65 +1,141 @@
-"""Value objects del Monitoring: el campo medido y su nivel de alerta.
+"""Value objects del monitoring.
 
-El edge es la AUTORIDAD de la clasificacion: el backend confia en el `level`
-que llega y no reclasifica. Por eso la regla vive aqui, en un tipo que no
-puede existir con un valor invalido, y no suelta en un servicio.
-
-Los umbrales estan duplicados a proposito en los otros tres stacks. Si cambias
-estos, cambia los otros:
-  - Back-End/.../radiationmonitoring/domain/services/RadiationLevel.java
-  - Front-End/.../contexts/radiationmonitoring/domain/radiation-level.ts
-  - Mobile_App (ver su contexto radiationmonitoring)
+Los valores de los enums son los que viajan en el contrato MQTT: cambiarlos
+rompe la ingesta del backend. No hay niveles de alerta: el Edge no evalúa límites.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from enum import Enum
 
-# Umbrales del sistema de alertas (uT). 200 uT ~ referencia ICNIRP (50 Hz, publico).
-CAUTION_UT = 100.0
-DANGER_UT = 200.0
+
+class InvalidReading(ValueError):
+    """Lectura que no supera la validación y no se publica."""
 
 
 @dataclass(frozen=True)
-class MagneticField:
-    """Magnitud de campo electromagnetico en microtesla.
-
-    Todo viaja en uT de extremo a extremo (ESP32 -> edge -> backend -> clientes).
-    Construirlo con un valor no numerico o negativo es imposible: la validacion
-    que antes estaba en `EmfReadingService.create_reading` vive ahora en el tipo.
-    """
+class MagneticFluxDensity:
+    """Densidad de flujo magnético en µT: número finito y no negativo."""
 
     micro_tesla: float
 
-    @classmethod
-    def from_raw(cls, raw) -> "MagneticField":
-        """Construye el VO desde el dato crudo del dispositivo.
+    def __post_init__(self) -> None:
+        value = self.micro_tesla
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise InvalidReading(f"densidad de flujo no numérica: {value!r}")
+        if math.isnan(value) or math.isinf(value):
+            raise InvalidReading(f"densidad de flujo no finita: {value!r}")
+        if value < 0:
+            raise InvalidReading(f"densidad de flujo negativa: {value!r}")
+        object.__setattr__(self, "micro_tesla", float(value))
 
-        Raises:
-            ValueError: si no es numerico o es negativo. Los mensajes se
-                conservan literalmente porque el endpoint los devuelve al ESP32.
-        """
+    @classmethod
+    def from_raw(cls, raw) -> "MagneticFluxDensity":
+        if isinstance(raw, bool):
+            raise InvalidReading(f"densidad de flujo no numérica: {raw!r}")
         try:
             value = float(raw)
         except (TypeError, ValueError):
-            raise ValueError("field_uT invalido")
-        if value != value:  # NaN: float('nan') no es < 0 ni >= 0
-            raise ValueError("field_uT invalido")
-        if value < 0:
-            raise ValueError("field_uT no puede ser negativo")
+            raise InvalidReading(f"densidad de flujo no numérica: {raw!r}")
         return cls(value)
 
     def __float__(self) -> float:
         return self.micro_tesla
 
 
-class AlertLevel(Enum):
-    """Nivel de alerta, con su mensaje pegado.
+class SyncOrigin(Enum):
+    """REALTIME: enviada al medirla. DEFERRED: venía del buffer offline del sensor."""
 
-    El nivel y el mensaje viajan siempre juntos. Antes `classify` los devolvia
-    como una tupla suelta, de modo que nada impedia emparejar un nivel con el
-    mensaje de otro; aqui la pareja es el propio valor del enum.
+    REALTIME = "REALTIME"
+    DEFERRED = "DEFERRED"
+
+    @classmethod
+    def from_flag(cls, deferred: int) -> "SyncOrigin":
+        return cls.DEFERRED if deferred == 1 else cls.REALTIME
+
+
+class ReadingQuality(Enum):
+    """Calidad según el rango del sensor.
+
+    SATURATED indica que el campo real fue al menos el medido, posiblemente
+    mayor. Es una heurística sobre la magnitud del vector, no sobre un eje.
+    Las saturadas se publican igual.
     """
+
+    VALID = "VALID"
+    SATURATED = "SATURATED"
+
+    @classmethod
+    def classify(cls, flux: MagneticFluxDensity, saturation_ut: float) -> "ReadingQuality":
+        return cls.SATURATED if flux.micro_tesla >= saturation_ut else cls.VALID
+
+
+class CapturedAtSource(Enum):
+    """DEVICE_CLOCK: el sensor tenía hora. EDGE_RECEIVED: no la tenía (ts = 0) y se usa la recepción."""
+
+    DEVICE_CLOCK = "DEVICE_CLOCK"
+    EDGE_RECEIVED = "EDGE_RECEIVED"
+
+
+class DeviceType(Enum):
+    """Tipo de dispositivo. Este Edge solo maneja el sensor fijo de la vivienda."""
+
+    PERSONAL_DOSIMETER = "PERSONAL_DOSIMETER"
+    FIXED_SENSOR = "FIXED_SENSOR"
+
+
+def _check_uint(name: str, value) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise InvalidReading(f"{name} debe ser un entero >= 0: {value!r}")
+
+
+@dataclass(frozen=True)
+class ReadingIdentity:
+    """Identidad de una lectura para deduplicar: `deviceId + sequence + ts crudo`.
+
+    Se usa el `ts` tal como llega por BLE, incluido el 0, y no `capturedAt`:
+    con ts = 0, `capturedAt` sale de la hora de recepción y cambiaría en cada
+    reenvío del buffer, así que los duplicados pasarían como lecturas nuevas.
+    Dos arranques del sensor sin hora pueden chocar en el mismo `sequence`.
+    """
+
+    device_id: str
+    sequence: int
+    device_ts: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.device_id, str) or not self.device_id.strip():
+            raise InvalidReading("deviceId vacío")
+        _check_uint("sequence", self.sequence)
+        _check_uint("ts", self.device_ts)
+
+    @property
+    def has_device_clock(self) -> bool:
+        return self.device_ts > 0
+
+
+@dataclass(frozen=True)
+class AlertThresholds:
+    """Umbrales del espacio en µT: CAUTION desde `caution_ut`, DANGER desde `danger_ut`."""
+
+    caution_ut: float
+    danger_ut: float
+
+    def __post_init__(self) -> None:
+        for name in ("caution_ut", "danger_ut"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"{name} debe ser numérico: {value!r}")
+            if math.isnan(value) or math.isinf(value) or value <= 0:
+                raise ValueError(f"{name} debe ser finito y mayor que 0: {value!r}")
+            object.__setattr__(self, name, float(value))
+        if self.caution_ut > self.danger_ut:
+            raise ValueError("el umbral de CAUTION no puede superar al de DANGER")
+
+
+class AlertLevel(Enum):
+    """Nivel de alerta local, con su mensaje."""
 
     SAFE = ("SAFE", "Campo dentro de rango seguro. Equipo operando con normalidad.")
     CAUTION = ("CAUTION", "Exposicion moderada. Se recomienda mantener distancia de la fuente.")
@@ -71,7 +147,6 @@ class AlertLevel(Enum):
 
     @property
     def wire_value(self) -> str:
-        """Cadena que viaja por la API. El backend la persiste tal cual."""
         return self._wire_value
 
     @property
@@ -79,16 +154,42 @@ class AlertLevel(Enum):
         return self._message
 
     @classmethod
-    def for_field(cls, field: MagneticField) -> "AlertLevel":
-        """Clasifica el campo. Umbrales inclusivos por abajo: 100 uT ya es CAUTION."""
-        value = field.micro_tesla
-        if value < CAUTION_UT:
-            return cls.SAFE
-        if value < DANGER_UT:
+    def classify(
+        cls, flux: MagneticFluxDensity, quality: ReadingQuality, thresholds: AlertThresholds
+    ) -> "AlertLevel":
+        """Umbrales inclusivos por abajo. Una saturada es DANGER: el campo fue al menos ese valor."""
+        if quality is ReadingQuality.SATURATED:
+            return cls.DANGER
+        value = flux.micro_tesla
+        if value >= thresholds.danger_ut:
+            return cls.DANGER
+        if value >= thresholds.caution_ut:
             return cls.CAUTION
-        return cls.DANGER
+        return cls.SAFE
 
     @property
     def requires_cut_off(self) -> bool:
-        """DANGER es el unico nivel en el que se recomienda cortar la energia."""
         return self is AlertLevel.DANGER
+
+
+class PlugAction(Enum):
+    """Orden para el enchufe."""
+
+    ON = "ON"
+    OFF = "OFF"
+
+
+class PlugState(Enum):
+    """Estado conocido del enchufe. UNKNOWN: el Edge todavía no lo accionó."""
+
+    ON = "ON"
+    OFF = "OFF"
+    UNKNOWN = "UNKNOWN"
+
+
+class PlugStateSource(Enum):
+    """Quién dejó el enchufe en su estado: el usuario, la regla automática o el arranque del Edge."""
+
+    USER = "USER"
+    AUTO = "AUTO"
+    STARTUP = "STARTUP"

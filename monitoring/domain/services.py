@@ -1,54 +1,99 @@
-"""Servicios de dominio del Monitoring: el SISTEMA DE ALERTAS.
+"""Servicios de dominio."""
+from __future__ import annotations
 
-Aqui vive la logica que el profesor pide que corra en el edge: el edge recibe
-el valor crudo del campo y EL MISMO clasifica el nivel de alerta
-(Safe / Caution / Danger) y genera el mensaje. El dispositivo conserva su
-reaccion local inmediata (LED + corte), pero el edge es la autoridad de la alerta.
-
-La regla de clasificacion y los umbrales viven en `value_objects`: aqui solo
-queda la orquestacion de construir una lectura valida.
-"""
 from datetime import datetime, timezone
+from typing import Dict, List, Optional, Sequence
 
-from dateutil.parser import parse
-
-from monitoring.domain.entities import EmfReading
-from monitoring.domain.value_objects import AlertLevel, MagneticField
-
-# Se reexportan para no romper a quien los importara desde aqui.
-from monitoring.domain.value_objects import (  # noqa: F401
-    CAUTION_UT as UMBRAL_CAUTION_UT,
-    DANGER_UT as UMBRAL_DANGER_UT,
+from monitoring.domain.entities import Reading
+from monitoring.domain.value_objects import (
+    AlertLevel,
+    AlertThresholds,
+    CapturedAtSource,
+    MagneticFluxDensity,
+    ReadingIdentity,
+    ReadingQuality,
+    SyncOrigin,
 )
 
 
-class EmfReadingService:
-    @staticmethod
-    def classify(field_ut) -> AlertLevel:
-        """Clasifica el campo crudo y devuelve el nivel (que ya lleva su mensaje).
+class ReadingFactory:
+    """Convierte el dato crudo del sensor en una `Reading` validada y clasificada.
 
-        Antes devolvia la tupla `(nivel, mensaje)`; ahora devuelve un
-        `AlertLevel`, que mantiene ambos unidos. Usa `.wire_value` y `.message`
-        para obtener las cadenas que viajan por la API.
-        """
-        return AlertLevel.for_field(MagneticField.from_raw(field_ut))
+    Con `ts = 0` el sensor aún no tenía hora y `capturedAt` es la hora de
+    recepción (EDGE_RECEIVED). Se calcula una sola vez: los reenvíos se
+    descartan por identidad antes de llegar aquí.
+    """
 
-    @staticmethod
-    def create_reading(serial_number, field_ut, plug, created_at) -> EmfReading:
-        """Valida el dato crudo, clasifica el nivel y construye la entidad."""
-        field = MagneticField.from_raw(field_ut)
-        level = AlertLevel.for_field(field)
-        parsed = EmfReadingService._parse_time(created_at)
-        return EmfReading(
-            serial_number, field.micro_tesla, level.wire_value, level.message, plug, parsed
+    def __init__(self, saturation_ut: float, thresholds: Optional[AlertThresholds] = None) -> None:
+        if not saturation_ut > 0:
+            raise ValueError("saturation_ut debe ser mayor que 0")
+        self._saturation_ut = float(saturation_ut)
+        # Umbrales usados cuando la lectura no trae los vigentes.
+        self._thresholds = thresholds or AlertThresholds(100.0, 200.0)
+
+    @property
+    def saturation_ut(self) -> float:
+        return self._saturation_ut
+
+    def from_raw(
+        self,
+        device_id: str,
+        sequence: int,
+        ts: int,
+        value,
+        deferred: int,
+        received_at: datetime,
+        thresholds: Optional[AlertThresholds] = None,
+    ) -> Reading:
+        identity = ReadingIdentity(device_id, sequence, ts)
+        flux = MagneticFluxDensity.from_raw(value)
+        if identity.has_device_clock:
+            captured_at = datetime.fromtimestamp(ts, tz=timezone.utc)
+            source = CapturedAtSource.DEVICE_CLOCK
+        else:
+            captured_at = received_at
+            source = CapturedAtSource.EDGE_RECEIVED
+        quality = ReadingQuality.classify(flux, self._saturation_ut)
+        return Reading(
+            identity=identity,
+            flux=flux,
+            captured_at=captured_at,
+            captured_at_source=source,
+            received_at=received_at,
+            origin=SyncOrigin.from_flag(deferred),
+            quality=quality,
+            level=AlertLevel.classify(flux, quality, thresholds or self._thresholds),
         )
 
-    @staticmethod
-    def _parse_time(created_at):
-        if not created_at:
-            return datetime.now(timezone.utc)
-        try:
-            # El ESP32 envia 'dd/mm/YYYY HH:MM:SS' -> dayfirst=True
-            return parse(created_at, dayfirst=True).astimezone(timezone.utc)
-        except (ValueError, TypeError, OverflowError):
-            return datetime.now(timezone.utc)
+
+class BatchPolicy:
+    """Agrupa las lecturas pendientes en mensajes de telemetría.
+
+    Un mensaje lleva un solo dispositivo y un solo origen. Las de tiempo real
+    van de a una; las diferidas, hasta `max_deferred` por mensaje, porque el
+    buffer del sensor puede traer 1800 de golpe. Solo se agrupan lecturas
+    consecutivas, para respetar el orden de llegada de cada dispositivo.
+    """
+
+    def __init__(self, max_deferred: int = 50) -> None:
+        if max_deferred < 1:
+            raise ValueError("max_deferred debe ser al menos 1")
+        self.max_deferred = max_deferred
+
+    def group(self, readings: Sequence[Reading]) -> List[List[Reading]]:
+        groups: List[List[Reading]] = []
+        open_group: Dict[str, List[Reading]] = {}  # último grupo de cada dispositivo
+        for reading in readings:
+            current = open_group.get(reading.device_id)
+            if (
+                current is not None
+                and reading.is_deferred
+                and current[0].is_deferred
+                and len(current) < self.max_deferred
+            ):
+                current.append(reading)
+                continue
+            new_group = [reading]
+            groups.append(new_group)
+            open_group[reading.device_id] = new_group
+        return groups

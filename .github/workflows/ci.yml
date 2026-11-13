@@ -1,9 +1,5 @@
-# CI del edge: compila los modulos, ejecuta los tests de dominio y comprueba
-# que el modo debug no quede fijo en el codigo.
-#
-# El edge es la AUTORIDAD de la clasificacion de niveles: el backend confia en
-# el `level` que llega aqui y no reclasifica. Si estos tests se ponen rojos,
-# toda la plataforma esta clasificando distinto.
+# CI del Edge hogar: compila los módulos, corre los tests y comprueba que el
+# modo debug de Flask no quede fijo en el código.
 
 name: CI — Edge
 
@@ -32,30 +28,23 @@ jobs:
       # Python no compila al arrancar: sin esto, un error de sintaxis en un
       # modulo que solo se importa bajo demanda no aparece hasta produccion.
       - name: Compilar todos los modulos
-        run: python -m compileall -q app.py iam monitoring shared tests
+        run: python -m compileall -q app.py monitoring shared tests tools
 
       # Sin dependencias de desarrollo: unittest viene en la libreria estandar.
       # -b silencia los print del edge salvo que un test falle.
       - name: Tests de dominio y del caso de uso
-        run: python -m unittest discover -s tests -b -v
+        run: python -m unittest discover -s tests -b
 
       # El debugger de Werkzeug permite ejecutar codigo arbitrario en el equipo
       # del edge, que esta en la misma red que el prototipo fisico.
       #
-      # El patron esta anclado a `app.run(` a proposito: sin anclar, cualquier
+      # El patron esta anclado a `.run(` a proposito: sin anclar, cualquier
       # comentario que mencione debug=True (como el docstring que explica esto
       # mismo) lo haria fallar por un falso positivo.
       - name: Comprobar que el modo debug no esta fijado a True
         run: |
-          if grep -nE 'app\.run\(.*debug\s*=\s*True' app.py; then
+          if grep -nE '\.run\(.*debug\s*=\s*True' app.py; then
             echo "::error file=app.py::debug=True fijo en el codigo (usar EMSAFE_EDGE_DEBUG)"
             exit 1
           fi
           echo "OK — debug gobernado por variable de entorno"
-
-      # Los umbrales estan duplicados a proposito en los cuatro stacks. Este
-      # paso es redundante con los tests, pero deja el valor a la vista en el
-      # log del CI para cuando alguien toque el backend, la web o el movil.
-      - name: Dejar constancia de los umbrales vigentes
-        run: |
-          python -c "from monitoring.domain.value_objects import CAUTION_UT, DANGER_UT; print(f'caution={CAUTION_UT} uT  danger={DANGER_UT} uT')"
