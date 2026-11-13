@@ -74,9 +74,11 @@ class EdgeSettings:
     # None: 80 % del umbral de DANGER vigente.
     restore_ut: Optional[float] = None
     saturation_ut: float = 790.0
-    auto_cutoff_enabled: bool = True
+    # Corte automático por DANGER, como opción de seguridad (US05).
+    auto_cutoff_enabled: bool = False
     # Vacío: sin actuador.
     actuator_url: str = ""
+    plug_id: str = "EMSafe-PLUG-01"
     # La API local no tiene autenticación: por defecto solo atiende al propio equipo.
     http_host: str = "127.0.0.1"
     mqtt_host: str = "localhost"
@@ -85,8 +87,6 @@ class EdgeSettings:
     # Fuera del repr para que no aparezcan en logs.
     mqtt_username: Optional[str] = field(default=None, repr=False)
     mqtt_password: Optional[str] = field(default=None, repr=False)
-    # Vacío: sin consulta de la orden del usuario.
-    backend_url: str = ""
     db_path: str = "emsafe_edge.db"
     # Días que se conservan las lecturas YA publicadas (sirven para descartar
     # reenvíos del sensor). Las pendientes nunca se borran por antigüedad.
@@ -130,13 +130,13 @@ class EdgeSettings:
             saturation_ut=_float(env, "EMSAFE_SATURATION_UT", d.saturation_ut),
             auto_cutoff_enabled=_bool(env, "EMSAFE_AUTO_CUTOFF_ENABLED", d.auto_cutoff_enabled),
             actuator_url=_text(env, "EMSAFE_ACTUATOR_URL", d.actuator_url).rstrip("/"),
+            plug_id=_text(env, "EMSAFE_PLUG_ID", d.plug_id),
             http_host=_text(env, "EMSAFE_HTTP_HOST", d.http_host),
             mqtt_host=_text(env, "EMSAFE_MQTT_HOST", d.mqtt_host),
             mqtt_port=_int(env, "EMSAFE_MQTT_PORT", d.mqtt_port),
             mqtt_tls=_bool(env, "EMSAFE_MQTT_TLS", d.mqtt_tls),
             mqtt_username=env.get("EMSAFE_MQTT_USERNAME") or None,
             mqtt_password=env.get("EMSAFE_MQTT_PASSWORD") or None,
-            backend_url=_text(env, "EMSAFE_BACKEND_URL", d.backend_url).rstrip("/"),
             db_path=_text(env, "EMSAFE_DB_PATH", d.db_path),
             outbox_retention_days=_int(
                 env, "EMSAFE_OUTBOX_RETENTION_DAYS", d.outbox_retention_days

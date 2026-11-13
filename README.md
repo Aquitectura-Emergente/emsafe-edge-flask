@@ -7,14 +7,16 @@ controla el **enchufe inteligente** y publica la telemetría por **MQTT** hacia 
 
 ```
 Sensor fijo (ESP32 #1) --BLE--> Edge hogar --HTTP/WiFi--> Actuador (ESP32 #2 + relé)
-                                    |
+                                    |    ^
+                                    |    +-- orden del usuario (iot/{plugId}/command)
                                     +--MQTT--> Broker --> Ingesta Device Management
+                                         telemetría, estados, iot/{plugId}/state
 ```
 
-**Qué hace:** clasifica cada lectura con umbrales configurables, corta la energía del aparato
-cuando una lectura en tiempo real llega a DANGER y la restablece cuando el campo baja (US04), con
-el corte automático desactivable (US05). La orden ON/OFF del usuario desde la app gana sobre la
-lógica automática.
+**Qué hace:** clasifica cada lectura con umbrales fijos configurables, aplica la orden ON/OFF
+que el usuario envía desde la app por MQTT y publica el estado del enchufe. Como opción de
+seguridad (US05), puede cortar la energía cuando una lectura en tiempo real llega a DANGER y
+restablecerla cuando el campo baja (US04); viene desactivada.
 
 **Qué no hace:** el nivel es local (relé, log y API); no viaja en el contrato MQTT. No calcula
 dosis ni exposición acumulada. La alarma inmediata (LED y buzzer) la decide el firmware del sensor
@@ -47,14 +49,15 @@ así los tests reemplazan BLE, broker, actuador y SQLite por dobles.
 
 ```text
 monitoring/
-  domain/          Reading, OutboxMessage, value objects (ReadingIdentity,
+  domain/          Reading, OutboxMessage, PlugCommand, value objects (ReadingIdentity,
                    MagneticFluxDensity, SyncOrigin, ReadingQuality, CapturedAtSource,
-                   AlertLevel, AlertThresholds), ReadingFactory, BatchPolicy y los puertos
+                   AlertLevel, AlertThresholds, PlugState…), ReadingFactory, BatchPolicy
+                   y los puertos
   application/     ingest_reading, control_plug, publish_outbox, track_connectivity,
                    purge_outbox
   infrastructure/  ble_protocol (bytes <-> datos, sin bleak), ble_sensor_client (bleak),
                    mqtt_payloads (esquema 1.0), mqtt_client (paho), models, sqlite_outbox,
-                   http_actuator, backend_desired_plug
+                   http_actuator
   interfaces/      runner (arma y orquesta el Edge), edge_thread (loop asyncio en un hilo),
                    api (Flask)
 shared/            config (variables de entorno), database (SQLite en modo WAL), clock
@@ -82,9 +85,8 @@ notificación BLE ──> cola asyncio ──> IngestReading ──> outbox SQLi
 - **Ingesta:** descarta valores no numéricos, NaN, infinitos o negativos, marca `SATURATED`
   desde `EMSAFE_SATURATION_UT`, calcula el nivel con los umbrales vigentes y deduplica por
   `deviceId + sequence + ts crudo`.
-- **Enchufe:** las reglas corren en su propia tarea y el HTTP al actuador en un hilo, así un
-  actuador lento o apagado nunca frena la ingesta. Un fallo se registra y se reintenta con la
-  siguiente lectura.
+- **Enchufe:** las órdenes y la regla automática corren en un hilo, así un actuador lento o
+  apagado nunca frena la ingesta. Cada cambio se publica en `iot/{plugId}/state`.
 - **Outbox y MQTT:** igual que el Edge industrial. Una lectura se marca publicada **solo tras el
   PUBACK**; sin broker se acumula y se reenvía en orden al reconectar. Last Will del nodo
   registrado antes de conectar.
@@ -97,11 +99,11 @@ notificación BLE ──> cola asyncio ──> IngestReading ──> outbox SQLi
 |---|---|
 | Clasificación | SAFE por debajo de `EMSAFE_CAUTION_UT`, CAUTION desde ahí y DANGER desde `EMSAFE_DANGER_UT` (inclusivos por abajo). Una lectura `SATURATED` es DANGER. |
 | Umbral del sensor | Al conectar se escribe el de DANGER (`EMSAFE_DANGER_UT`), así el LED y el buzzer coinciden con el corte. Los umbrales del hogar son fijos: solo vienen de `EMSAFE_CAUTION_UT` y `EMSAFE_DANGER_UT`. |
-| Corte (US04) | Lectura **en tiempo real** en DANGER → `GET /off`. |
-| Restablecimiento | Cuando el campo baja de `EMSAFE_RESTORE_UT` (80 % de DANGER por defecto) → `GET /on`, solo si el corte lo hizo la lógica automática. |
+| Orden del usuario | Llega por `iot/{plugId}/command` (QoS 1). El Edge acciona el actuador y publica `iot/{plugId}/state` con `source` `USER`. Es idempotente por `commandId`, y se ignora si `requestedAt` difiere más de 60 s de la hora del Edge. Si el actuador falla, se publica el estado sin cambios y se registra en el log. |
+| Corte automático (US05) | Opción de seguridad, desactivada por defecto (`EMSAFE_AUTO_CUTOFF_ENABLED`). Activada: lectura **en tiempo real** en DANGER → `GET /off` (US04), y bajo `EMSAFE_RESTORE_UT` (80 % de DANGER por defecto) → `GET /on`, solo si el corte lo hizo la regla. Publica el estado con `source` `AUTO`. |
+| Prioridad | La orden del usuario gana: un OFF no lo deshace la regla automática, y un ON durante DANGER no se vuelve a cortar hasta que el campo baje del umbral de restablecimiento. |
 | Diferidas | Solo se registran y se publican: describen el pasado y nunca accionan el relé. |
-| US05 | `EMSAFE_AUTO_CUTOFF_ENABLED=false` desactiva el corte y el restablecimiento automáticos. |
-| Orden del usuario | Si `EMSAFE_BACKEND_URL` está definido, se consulta `GET /api/v1/devices/{id}/plug` cada 5 s como máximo. Una orden ON u OFF gana sobre la lógica automática. |
+| Arranque | El Edge no sabe en qué estado está el relé: publica `UNKNOWN` con `source` `STARTUP` y republica el último estado cada vez que se conecta al broker. |
 
 ## Requisitos
 
@@ -200,9 +202,9 @@ el arranque con un mensaje que nombra la variable.
 | `EMSAFE_DANGER_UT` | Desde qué valor es DANGER; se escribe en el sensor | `200` |
 | `EMSAFE_RESTORE_UT` | Restablecer el enchufe por debajo de este valor | 80 % de DANGER |
 | `EMSAFE_SATURATION_UT` | Desde qué valor una lectura se marca `SATURATED` | `790` |
-| `EMSAFE_AUTO_CUTOFF_ENABLED` | Corte automático (US05) | `true` |
+| `EMSAFE_AUTO_CUTOFF_ENABLED` | Corte automático por DANGER (US05) | `false` |
 | `EMSAFE_ACTUATOR_URL` | URL base del actuador, p. ej. `http://172.20.10.5` | vacío = sin enchufe |
-| `EMSAFE_BACKEND_URL` | Backend para consultar la orden del usuario | vacío = sin orden |
+| `EMSAFE_PLUG_ID` | Identificador del enchufe en los tópicos `command` y `state` | `EMSafe-PLUG-01` |
 | `EMSAFE_MQTT_HOST` / `EMSAFE_MQTT_PORT` | Broker MQTT | `localhost` / `1883` |
 | `EMSAFE_MQTT_TLS` | Activa TLS (`true`/`false`) | `false` |
 | `EMSAFE_MQTT_USERNAME` / `EMSAFE_MQTT_PASSWORD` | Credenciales del nodo | vacío |
@@ -233,9 +235,8 @@ autenticación**: por eso escucha por defecto únicamente en `127.0.0.1`. Las ap
 móvil) no la consumen: leen los datos del backend, que los recibe por MQTT. Solo cambia
 `EMSAFE_HTTP_HOST` (por ejemplo a `0.0.0.0`) en una red de confianza y mientras haga falta.
 
-
-- `GET /health`: estado del Edge, del BLE, de MQTT, del actuador (último estado del enchufe,
-  orden del usuario, último error), lecturas pendientes y umbrales vigentes.
+- `GET /health`: estado del Edge, del BLE, de MQTT, del enchufe (estado, `source`, último
+  `commandId`, último error), lecturas pendientes y umbrales.
 - `GET /api/v1/emf-monitoring/readings?limit=50&deviceId=EMSafe-DOS-01`: últimas lecturas con su
   nivel, `quality` y `origin`.
 
@@ -277,31 +278,54 @@ $env:EMSAFE_ACTUATOR_URL = "http://172.20.10.5"
   `"connectivity":"ONLINE"` y un `iot/EMSafe-DOS-01/telemetry` por segundo con
   `"deviceType":"FIXED_SENSOR"`. Si el sensor tenía lecturas guardadas, primero llegan lotes
   `DEFERRED` de hasta 50.
+- En la terminal 1 también aparece `iot/EMSafe-PLUG-01/state` con `"state":"UNKNOWN"` y
+  `"source":"STARTUP"`.
 - `http://localhost:5000/health` muestra `ble[0].connected: true` y `mqtt.connected: true`.
 
-### Corte y restablecimiento del enchufe
+### Orden del usuario
 
-Usa **un solo imán**, con el polo hacia el sensor, y acércalo **en línea recta**. Con varios
-imanes, o con uno que gira, los campos se pueden restar y la lectura puede *bajar* al acercarlo.
+La app publica la orden en `iot/EMSafe-PLUG-01/command`. Para simularla usa **MQTT Explorer**: en
+*Publish* escribe el tópico `iot/EMSafe-PLUG-01/command`, elige el formato `json`, QoS 1, **sin**
+retain, y pega:
 
-1. Acerca el imán hasta pasar 200 µT: el sensor enciende la alarma local, el log muestra
-   `Enchufe OFF: DANGER (...)` y la lámpara se apaga. `/health` muestra `actuator.plug: OFF`.
-2. Aléjalo: mientras el campo esté entre 160 y 200 µT (CAUTION) el enchufe sigue apagado. Bajo
-   160 µT el log muestra `Enchufe ON: campo bajo el umbral de restablecimiento` y la lámpara
-   vuelve.
-3. Muy cerca, el sensor satura (800 µT o más): la lectura se publica con `quality` `SATURATED` y
-   cuenta como DANGER.
-4. **Actuador caído:** desenchúfalo y repite el paso 1. El log registra `Actuador sin respuesta`,
-   la telemetría sigue saliendo y `/health` muestra el error en `actuator.lastError`.
-5. **US05:** reinicia el Edge con `$env:EMSAFE_AUTO_CUTOFF_ENABLED = "false"`. Las lecturas en
-   DANGER ya no apagan la lámpara.
-6. **Diferidas:** apaga el Edge, acerca el imán unos segundos y aléjalo, y vuelve a arrancar. Las
+```text
+{"schemaVersion":"1.0","commandId":"cmd-001","plugId":"EMSafe-PLUG-01","action":"OFF","requestedBy":"USER","requestedAt":"2026-11-13T15:10:00Z"}
+```
+
+Antes de publicar, pon en `requestedAt` la hora UTC actual (Perú es UTC−5: 10:10 local son 15:10
+UTC). Una orden con más de 60 s de diferencia se ignora.
+
+1. Publica la orden `OFF`: la lámpara se apaga, el log muestra `Enchufe OFF: orden del usuario
+   cmd-001` y en la terminal 1 aparece `iot/EMSafe-PLUG-01/state` con `"state":"OFF"`,
+   `"commandId":"cmd-001"` y `"source":"USER"`.
+2. Publica **el mismo** mensaje otra vez: el log dice `Orden cmd-001 repetida` y no pasa nada.
+3. Cambia `commandId` a `cmd-002`, `action` a `ON` y actualiza `requestedAt`: la lámpara vuelve.
+4. Publica una orden con un `requestedAt` de hace unos minutos: se ignora con una advertencia.
+5. **Actuador caído:** desenchúfalo y publica una orden nueva. El log registra `Actuador sin
+   respuesta` y `Orden ... sin efecto`, y se publica el estado anterior con el `commandId` de la
+   orden.
+
+### Corte automático (opcional)
+
+Reinicia el Edge con `$env:EMSAFE_AUTO_CUTOFF_ENABLED = "true"`. Usa **un solo imán**, con el polo
+hacia el sensor, y acércalo **en línea recta**: con varios imanes, o con uno que gira, los campos
+se pueden restar y la lectura puede *bajar* al acercarlo.
+
+1. Acerca el imán hasta pasar 200 µT: suena la alarma local, el log muestra
+   `Enchufe OFF: DANGER (...)`, la lámpara se apaga y el estado sale con `"source":"AUTO"`.
+2. Aléjalo: entre 160 y 200 µT el enchufe sigue apagado. Bajo 160 µT vuelve, con `source` `AUTO`.
+3. Con el imán cerca, publica una orden `ON`: la lámpara vuelve y no se corta de nuevo hasta que
+   el campo baje de 160 µT y vuelva a pasar 200 µT.
+4. Muy cerca, el sensor satura (800 µT o más): la lectura sale con `quality` `SATURATED` y cuenta
+   como DANGER.
+5. **Diferidas:** apaga el Edge, acerca el imán unos segundos y aléjalo, y vuelve a arrancar. Las
    lecturas en DANGER llegan como `DEFERRED` y no accionan el relé.
 
 ### Corte de nube y de BLE
 
 - Detén *Mosquitto Broker* (`net stop mosquitto` en un cmd de administrador): el Edge sigue
-  guardando y controlando el enchufe. Al iniciarlo de nuevo publica las acumuladas en orden.
+  guardando las lecturas (y, si está activado, aplicando el corte automático). Al iniciarlo de
+  nuevo publica las acumuladas en orden y republica el estado del enchufe.
 - Apaga el Bluetooth unos 60 s: se publica `OFFLINE` en `iot/EMSafe-DOS-01/status`; al volver,
   `ONLINE`, las diferidas sin duplicados y luego tiempo real.
 
@@ -314,12 +338,14 @@ imanes, o con uno que gira, los campos se pueden restar y la lectura puede *baja
 ## Limitaciones conocidas
 
 - **Estado inicial del enchufe desconocido.** Al arrancar, el Edge no sabe si el relé está
-  encendido; el primer DANGER manda `/off` igual. El firmware del actuador arranca con el aparato
-  encendido.
-- **Orden del usuario.** Se consulta como máximo cada 5 s y solo al llegar lecturas en tiempo real:
-  sin sensor conectado no se aplica.
-- **Nivel con los umbrales del momento.** El nivel se guarda al recibir la lectura; si después
-  cambia el umbral, las lecturas anteriores conservan el nivel con el que llegaron.
+  encendido y publica `UNKNOWN`. El firmware del actuador arranca con el aparato encendido.
+- **Órdenes y reloj.** La ventana de 60 s compara `requestedAt` con el reloj del Edge: si la app o
+  la laptop tienen la hora desfasada, las órdenes se ignoran. La idempotencia por `commandId` se
+  guarda en memoria; tras reiniciar el Edge la cubre la misma ventana de 60 s.
+- **Sin sesión persistente.** El Edge se conecta con `clean_start`: una orden publicada mientras
+  estaba desconectado del broker no le llega.
+- **Nivel con los umbrales del momento.** El nivel se guarda al recibir la lectura; si se
+  cambian los umbrales y se reinicia el Edge, las lecturas anteriores conservan su nivel.
 - **Sensor del prototipo.** El magnetómetro (QMC5883L) mide **campo estático**, no la componente
   ELF, y satura en unos 800 µT. Una lectura `SATURATED` significa que el campo fue **de al menos
   ese valor**. Un imán muy cerca puede magnetizar el sensor y dejar un desplazamiento; se corrige
@@ -340,7 +366,7 @@ imanes, o con uno que gira, los campos se pueden restar y la lectura puede *baja
 ```
 
 Los tests usan dobles y SQLite en memoria, sin BLE, broker ni red. Cubren el dominio, la
-clasificación, las reglas del enchufe (incluidas las diferidas y la orden del usuario), el outbox,
+clasificación, las órdenes y el estado del enchufe, el corte automático (incluidas las diferidas), el outbox,
 los adaptadores y la API. `tests/test_contract_payload.py` compara el JSON que genera el código con
 los ejemplos de [Contrato MQTT](#contrato-mqtt). El CI corre lo mismo en Python 3.11 en cada push y
 pull request.
@@ -353,9 +379,10 @@ Versión del esquema **1.0** (revisión 1.0.1: aclaraciones sin cambio de format
 compartido con el contenedor de ingesta del backend. Cualquier cambio sube la versión y se avisa
 al equipo de backend.
 
-Es el mismo contrato que usa el Edge industrial. En el hogar cambian solo `deviceType`
-(`FIXED_SENSOR`) y `edgeNodeId` (`EDGE-HOGAR-01`). El nivel SAFE / CAUTION / DANGER es local:
-no viaja en estos mensajes.
+Es el mismo contrato que usa el Edge industrial. En el hogar cambian `deviceType`
+(`FIXED_SENSOR`) y `edgeNodeId` (`EDGE-HOGAR-01`), y se suman los tópicos del enchufe inteligente
+(ver [Extensión del hogar](#extensión-del-hogar-enchufe-inteligente)). El nivel SAFE / CAUTION /
+DANGER es local: no viaja en estos mensajes.
 
 > El test `tests/test_contract_payload.py` lee el **primer bloque JSON de esta sección** (el
 > ejemplo de telemetría) y lo compara con lo que genera el código. Si cambias el ejemplo o el
@@ -368,6 +395,8 @@ no viaja en estos mensajes.
 | `iot/{deviceId}/telemetry` | Edge → nube | 1 | No | Edge | Ingesta (`MqttTelemetrySubscriber`) |
 | `iot/{deviceId}/status` *(propuesto)* | Edge → nube | 1 | Sí | Edge | Ingesta (conectividad del dispositivo) |
 | `edge/{edgeNodeId}/status` *(propuesto)* | Edge → nube | 1 | Sí (LWT) | Edge / broker | Ingesta (monitoreo de nodos) |
+| `iot/{plugId}/command` *(hogar)* | Nube → Edge | 1 | No | Backend (orden de la app) | Edge hogar |
+| `iot/{plugId}/state` *(hogar)* | Edge → nube | 1 | Sí | Edge hogar | Backend |
 
 `deviceId` es el identificador del dispositivo registrado en Device Management (prototipo:
 `EMSafe-DOS-01`, que es también su nombre BLE).
@@ -483,6 +512,57 @@ despedirse:
 ```
 
 El Last Will **no lleva `changedAt`**: se registra al conectar, antes de saber cuándo caerá el Edge.
+
+### Extensión del hogar: enchufe inteligente
+
+Solo los usa el Edge hogar. `plugId` identifica el enchufe (`EMSAFE_PLUG_ID`, prototipo
+`EMSafe-PLUG-01`).
+
+**Orden — `iot/{plugId}/command`** (QoS 1, sin retain):
+
+```json
+{
+  "schemaVersion": "1.0",
+  "commandId": "3b8e1f7a-2c4d-4e9b-8a1f-6d5c4b3a2e10",
+  "plugId": "EMSafe-PLUG-01",
+  "action": "OFF",
+  "requestedBy": "USER",
+  "requestedAt": "2026-11-12T15:10:00Z"
+}
+```
+
+| Campo | Tipo | Regla |
+|---|---|---|
+| `commandId` | string | Único por orden. Una orden con un `commandId` ya procesado se ignora. |
+| `plugId` | string | Igual al del tópico. |
+| `action` | enum | `ON` \| `OFF`. |
+| `requestedBy` | enum | `USER`. |
+| `requestedAt` | ISO-8601 UTC | Se ignora si difiere más de 60 s de la hora del Edge. |
+
+**Estado — `iot/{plugId}/state`** (QoS 1, retained):
+
+```json
+{
+  "schemaVersion": "1.0",
+  "plugId": "EMSafe-PLUG-01",
+  "state": "OFF",
+  "commandId": "3b8e1f7a-2c4d-4e9b-8a1f-6d5c4b3a2e10",
+  "source": "USER",
+  "changedAt": "2026-11-12T15:10:01Z"
+}
+```
+
+| Campo | Tipo | Regla |
+|---|---|---|
+| `state` | enum | `ON` \| `OFF` \| `UNKNOWN` (el Edge todavía no accionó el relé). |
+| `commandId` | string \| null | La orden que originó el mensaje; `null` si no lo originó una orden. |
+| `source` | enum | `USER` (orden), `AUTO` (corte automático) \| `STARTUP` (arranque del Edge). |
+| `changedAt` | ISO-8601 UTC | Momento del último cambio de estado. |
+
+- Se publica tras cada orden y cada acción automática, al arrancar (`UNKNOWN`, `STARTUP`) y cada
+  vez que el Edge se conecta al broker.
+- Si el actuador no responde a una orden, se publica el estado **sin cambios** con el `commandId`
+  de esa orden y `source` `USER`: la app ve que la orden no surtió efecto.
 
 ### Seguridad
 

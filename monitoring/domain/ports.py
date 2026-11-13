@@ -6,7 +6,7 @@ from typing import Callable, List, Optional, Protocol
 
 from monitoring.domain.entities import OutboxMessage, Reading
 from monitoring.domain.services import BatchPolicy
-from monitoring.domain.value_objects import ReadingIdentity
+from monitoring.domain.value_objects import PlugState, PlugStateSource, ReadingIdentity
 from shared.clock import Clock  # noqa: F401  (reexportado como puerto)
 
 
@@ -85,9 +85,15 @@ class ActuatorGateway(Protocol):
         ...
 
 
-class DesiredPlugSource(Protocol):
-    """Orden del usuario para el enchufe desde la app."""
+class PlugStatePublisher(Protocol):
+    """Publica el estado del enchufe (retained). Sin broker devuelve False."""
 
-    def fetch_desired_plug(self, device_id: str) -> Optional[str]:
-        """"ON", "OFF" o None si no hay orden o no se pudo consultar."""
+    def publish_plug_state(
+        self,
+        plug_id: str,
+        state: PlugState,
+        command_id: Optional[str],
+        source: PlugStateSource,
+        changed_at: datetime,
+    ) -> bool:
         ...

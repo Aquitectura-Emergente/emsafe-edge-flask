@@ -1,7 +1,6 @@
-"""Adaptadores HTTP del actuador y de la orden del usuario, con un `get` falso."""
+"""Adaptador HTTP del actuador, con un `get` falso."""
 import unittest
 
-from monitoring.infrastructure.backend_desired_plug import BackendDesiredPlugSource
 from monitoring.infrastructure.http_actuator import HttpActuatorGateway
 
 
@@ -50,33 +49,6 @@ class HttpActuatorTest(unittest.TestCase):
         with self.assertLogs("monitoring.infrastructure.http_actuator", level="WARNING"):
             self.assertFalse(actuator.turn_on())
         self.assertIn("HTTP 500", actuator.last_error)
-
-
-class DesiredPlugTest(unittest.TestCase):
-    def source(self, result):
-        get = FakeGet(result)
-        return BackendDesiredPlugSource("https://backend/", get=get), get
-
-    def test_lee_la_orden_envuelta_en_data(self):
-        source, get = self.source(FakeResponse(200, {"data": {"desiredPlug": "off"}}))
-        self.assertEqual(source.fetch_desired_plug("EMSafe-DOS-01"), "OFF")
-        self.assertEqual(get.calls[0][0], "https://backend/api/v1/devices/EMSafe-DOS-01/plug")
-
-    def test_sin_orden_o_valores_raros_es_none(self):
-        for body in ({"data": {"desiredPlug": None}}, {"data": None}, {}, None,
-                     {"data": {"desiredPlug": "AUTO"}}):
-            source, _ = self.source(FakeResponse(200, body))
-            self.assertIsNone(source.fetch_desired_plug("X"), body)
-
-    def test_fallos_de_red_o_http_son_none(self):
-        source, _ = self.source(FakeResponse(404))
-        self.assertIsNone(source.fetch_desired_plug("X"))
-        source, _ = self.source(FakeResponse(200, ValueError("no es json")))
-        with self.assertLogs("monitoring.infrastructure.backend_desired_plug", level="WARNING"):
-            self.assertIsNone(source.fetch_desired_plug("X"))
-        source, _ = self.source(OSError("sin red"))
-        with self.assertLogs("monitoring.infrastructure.backend_desired_plug", level="WARNING"):
-            self.assertIsNone(source.fetch_desired_plug("X"))
 
 
 if __name__ == "__main__":

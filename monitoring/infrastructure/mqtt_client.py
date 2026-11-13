@@ -14,15 +14,17 @@ import asyncio
 import logging
 import threading
 from datetime import datetime
-from typing import Callable, Dict, Optional, Sequence
+from typing import Awaitable, Callable, Dict, Optional, Sequence
 
 from monitoring.domain.entities import OutboxMessage
-from monitoring.domain.value_objects import DeviceType
+from monitoring.domain.value_objects import DeviceType, PlugState, PlugStateSource
 from monitoring.infrastructure import mqtt_payloads as mp
 from shared.clock import Clock
 from shared.config import EdgeSettings
 
 log = logging.getLogger(__name__)
+
+CommandHandler = Callable[[bytes], Awaitable[object]]
 
 def _failed(reason_code) -> bool:
     """paho entrega ReasonCode o int según el caso."""
@@ -63,6 +65,8 @@ class MqttGateway:
         self._connected = False
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._on_connected: Optional[Callable[[], None]] = None
+        self._on_command: Optional[CommandHandler] = None
+        self._command_topic = mp.plug_command_topic(settings.plug_id)
 
     # ---------- Arranque y parada ----------
 
@@ -70,15 +74,18 @@ class MqttGateway:
         self,
         loop: asyncio.AbstractEventLoop,
         on_connected: Optional[Callable[[], None]] = None,
+        on_command: Optional[CommandHandler] = None,
     ) -> None:
         """Conecta en segundo plano; paho reconecta solo."""
         self._loop = loop
         self._on_connected = on_connected
+        self._on_command = on_command
         client, s = self._client, self._settings
 
         client.on_connect = self._handle_connect
         client.on_disconnect = self._handle_disconnect
         client.on_publish = self._handle_publish
+        client.on_message = self._handle_message
 
         if s.mqtt_username:
             client.username_pw_set(s.mqtt_username, s.mqtt_password)
@@ -164,6 +171,24 @@ class MqttGateway:
         )
         return info.rc == 0
 
+    # ---------- PlugStatePublisher ----------
+
+    def publish_plug_state(
+        self,
+        plug_id: str,
+        state: PlugState,
+        command_id: Optional[str],
+        source: PlugStateSource,
+        changed_at: datetime,
+    ) -> bool:
+        if not self._connected:
+            return False
+        payload = mp.plug_state_payload(plug_id, state, command_id, source, changed_at)
+        info = self._client.publish(
+            mp.plug_state_topic(plug_id), mp.to_json(payload), qos=1, retain=True
+        )
+        return info.rc == 0
+
     # ---------- Callbacks de paho (hilo de red) ----------
 
     def _handle_connect(self, client, _userdata, _flags, reason_code, _properties=None) -> None:
@@ -178,6 +203,9 @@ class MqttGateway:
             qos=1,
             retain=True,
         )
+        # Con clean_start el broker no recuerda las suscripciones.
+        if self._on_command is not None:
+            client.subscribe(self._command_topic, qos=1)
         if self._on_connected is not None and self._loop is not None:
             self._loop.call_soon_threadsafe(self._on_connected)
 
@@ -196,6 +224,11 @@ class MqttGateway:
         if not acked:
             log.warning("El broker respondió el PUBACK %s con error: %s", mid, reason_code)
         self._resolve(future, acked)
+
+    def _handle_message(self, _client, _userdata, message) -> None:
+        if message.topic != self._command_topic or self._on_command is None or self._loop is None:
+            return
+        asyncio.run_coroutine_threadsafe(self._on_command(bytes(message.payload)), self._loop)
 
     # ---------- Utilidades ----------
 

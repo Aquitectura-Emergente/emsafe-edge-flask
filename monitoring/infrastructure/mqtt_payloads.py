@@ -6,10 +6,10 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
-from monitoring.domain.entities import OutboxMessage, Reading
-from monitoring.domain.value_objects import DeviceType
+from monitoring.domain.entities import InvalidPlugCommand, OutboxMessage, PlugCommand, Reading
+from monitoring.domain.value_objects import DeviceType, PlugAction, PlugState, PlugStateSource
 
 SCHEMA_VERSION = "1.0"
 
@@ -103,3 +103,74 @@ def edge_online_payload(changed_at: datetime) -> Dict[str, Any]:
 def edge_last_will_payload() -> Dict[str, Any]:
     """Last Will: sin `changedAt`, porque se registra antes de saber cuándo caerá el Edge."""
     return {"status": "OFFLINE"}
+
+
+# ---------- Enchufe (extensión del hogar) ----------
+
+def plug_command_topic(plug_id: str) -> str:
+    return f"iot/{plug_id}/command"
+
+
+def plug_state_topic(plug_id: str) -> str:
+    return f"iot/{plug_id}/state"
+
+
+def plug_state_payload(
+    plug_id: str,
+    state: PlugState,
+    command_id: Optional[str],
+    source: PlugStateSource,
+    changed_at: datetime,
+) -> Dict[str, Any]:
+    return {
+        "schemaVersion": SCHEMA_VERSION,
+        "plugId": plug_id,
+        "state": state.value,
+        "commandId": command_id,
+        "source": source.value,
+        "changedAt": iso_utc(changed_at),
+    }
+
+
+def _parse_iso_utc(value, name: str) -> datetime:
+    if not isinstance(value, str):
+        raise InvalidPlugCommand(f"{name} inválido: {value!r}")
+    try:
+        # Python 3.10 no acepta la "Z" final en fromisoformat.
+        parsed = datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
+    except ValueError:
+        raise InvalidPlugCommand(f"{name} no es ISO-8601: {value!r}")
+    if parsed.tzinfo is None:
+        raise InvalidPlugCommand(f"{name} sin zona horaria: {value!r}")
+    return parsed.astimezone(timezone.utc)
+
+
+def parse_plug_command(plug_id: str, raw) -> PlugCommand:
+    """Valida un mensaje de `iot/{plugId}/command`. Los campos desconocidos se ignoran."""
+    try:
+        text = raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else raw
+        data = json.loads(text)
+    except (UnicodeDecodeError, ValueError, TypeError) as exc:
+        raise InvalidPlugCommand(f"la orden no es JSON válido: {exc}")
+    if not isinstance(data, dict):
+        raise InvalidPlugCommand("la orden debe ser un objeto JSON")
+
+    schema = data.get("schemaVersion")
+    if not isinstance(schema, str) or schema.split(".")[0] != SCHEMA_VERSION.split(".")[0]:
+        raise InvalidPlugCommand(f"schemaVersion no soportada: {schema!r}")
+    if data.get("plugId") != plug_id:
+        raise InvalidPlugCommand(
+            f"plugId {data.get('plugId')!r} no coincide con el tópico ({plug_id!r})"
+        )
+    try:
+        action = PlugAction(data.get("action"))
+    except ValueError:
+        raise InvalidPlugCommand(f"action inválida: {data.get('action')!r}")
+    if data.get("requestedBy") != "USER":
+        raise InvalidPlugCommand(f"requestedBy inválido: {data.get('requestedBy')!r}")
+    return PlugCommand(
+        command_id=data.get("commandId"),
+        plug_id=plug_id,
+        action=action,
+        requested_at=_parse_iso_utc(data.get("requestedAt"), "requestedAt"),
+    )

@@ -3,6 +3,7 @@
 Casos de uso reales; solo los bordes (BLE, broker, SQLite) son dobles.
 """
 import asyncio
+import json
 import unittest
 
 from monitoring.application.control_plug import ControlPlugUseCase
@@ -14,6 +15,7 @@ from monitoring.domain.services import ReadingFactory
 from monitoring.domain.value_objects import AlertThresholds
 from monitoring.infrastructure.ble_sensor_client import ReadingReceived, SessionStarted
 from monitoring.infrastructure.ble_protocol import RawReading
+from monitoring.infrastructure.mqtt_payloads import parse_plug_command
 from monitoring.interfaces.runner import EdgeRunner, build_runner
 from shared.config import EdgeSettings
 from tests.fakes import PUBLISHED, FakeClock, FakeOutbox, sequential_ids
@@ -30,11 +32,12 @@ class FakeMqtt:
         self.telemetry = []
         self.statuses = []
         self.started = self.stopped = False
-        self.on_connected = None
+        self.on_connected = self.on_command = None
+        self.plug_states = []
 
-    def start(self, loop, on_connected):
+    def start(self, loop, on_connected, on_command=None):
         self.started = True
-        self.on_connected = on_connected
+        self.on_connected, self.on_command = on_connected, on_command
 
     def stop(self):
         self.stopped = True
@@ -43,6 +46,12 @@ class FakeMqtt:
         if not self.is_connected:
             return False
         self.telemetry.append(message)
+        return True
+
+    def publish_plug_state(self, plug_id, state, command_id, source, changed_at):
+        if not self.is_connected:
+            return False
+        self.plug_states.append((state.value, command_id, source.value))
         return True
 
     def publish_device_status(self, device_id, connectivity, changed_at):
@@ -171,29 +180,56 @@ class RecordingActuator:
         return True
 
 
-class PlugWorkerTest(unittest.IsolatedAsyncioTestCase):
+def plug_control(mqtt, clock, actuator):
+    return ControlPlugUseCase(
+        actuator, mqtt, clock, lambda _d: AlertThresholds(100, 200), "EMSafe-PLUG-01",
+        parse_plug_command, auto_cutoff_enabled=True,
+    )
+
+
+class PlugTest(unittest.IsolatedAsyncioTestCase):
     async def test_tiempo_real_en_danger_corta_y_las_diferidas_no(self):
         clock, actuator = FakeClock(), RecordingActuator()
-        thresholds = lambda _d: AlertThresholds(100, 200)
-        control = ControlPlugUseCase(actuator, None, clock, thresholds)
         holder = []
         ingest = IngestReadingUseCase(
-            FakeOutbox(), ReadingFactory(790.0), clock, thresholds,
+            FakeOutbox(), ReadingFactory(790.0), clock, lambda _d: AlertThresholds(100, 200),
             on_stored=lambda r: holder[0].reading_stored(r),
         )
         readings = [
             RawReading(seq=1, ts=TS + 1, uT=500.0, deferred=1),
             RawReading(seq=2, ts=TS + 2, uT=250.0, deferred=0),
         ]
-        runner, _, _ = build(readings, ingest=ingest)
-        runner._control = control
+        runner, _, mqtt = build(readings, ingest=ingest)
+        runner._control = plug_control(mqtt, clock, actuator)
         holder.append(runner)
         task = asyncio.create_task(runner.run())
 
         await wait_until(lambda: actuator.calls == ["off"])
         runner.stop()
         await asyncio.wait_for(task, 2)
-        self.assertEqual(runner.health()["actuator"]["plug"], "OFF")
+        self.assertEqual(runner.health()["actuator"]["state"], "OFF")
+        self.assertIn(("OFF", None, "AUTO"), mqtt.plug_states)
+
+    async def test_orden_mqtt_acciona_y_publica_estado(self):
+        clock, actuator = FakeClock(), RecordingActuator()
+        runner, _, mqtt = build([])
+        runner._control = plug_control(mqtt, clock, actuator)
+        task = asyncio.create_task(runner.run())
+        await wait_until(lambda: mqtt.started)
+        self.assertIsNotNone(mqtt.on_command)
+
+        raw = json.dumps({"schemaVersion": "1.0", "commandId": "c-9", "plugId": "EMSafe-PLUG-01",
+                          "action": "OFF", "requestedBy": "USER",
+                          "requestedAt": "2026-11-12T15:04:00Z"}).encode()
+        await mqtt.on_command(raw)
+        mqtt.on_connected()
+        await wait_until(lambda: len(mqtt.plug_states) == 2)
+        runner.stop()
+        await asyncio.wait_for(task, 2)
+
+        self.assertEqual(actuator.calls, ["off"])
+        # Al reconectar se republica el estado vigente.
+        self.assertEqual(mqtt.plug_states, [("OFF", "c-9", "USER"), ("OFF", "c-9", "USER")])
 
 
 class BuildRunnerTest(unittest.TestCase):
@@ -211,6 +247,8 @@ class BuildRunnerTest(unittest.TestCase):
             health = runner.health()
             self.assertEqual(health["ble"], [{"device": "EMSafe-FIX-02", "connected": False}])
             self.assertTrue(health["actuator"]["enabled"])
+            self.assertEqual(health["actuator"]["plugId"], "EMSafe-PLUG-01")
+            self.assertEqual(health["actuator"]["state"], "UNKNOWN")
             self.assertEqual(health["outbox"], {"pending": 0})
             self.assertEqual(health["thresholds"], {"cautionUT": 100.0, "dangerUT": 200.0, "restoreUT": 160.0})
         finally:

@@ -53,6 +53,7 @@ class EdgeRunner:
         self._stop: Optional[asyncio.Event] = None
         self._wake: Optional[asyncio.Event] = None
         self._plug_queue: Optional[asyncio.Queue] = None
+        self._background: set = set()
 
     def stop(self) -> None:
         """Pide un apagado ordenado. Se llama desde el loop."""
@@ -93,7 +94,9 @@ class EdgeRunner:
         self._stop = asyncio.Event()
         self._wake = asyncio.Event()
         self._plug_queue = asyncio.Queue()
-        self._mqtt.start(loop, self._on_broker_connected)
+        self._mqtt.start(
+            loop, self._on_broker_connected, self._on_command if self._control else None
+        )
 
         ble_tasks = [
             asyncio.create_task(c.run(), name=f"ble:{c.device_name}") for c in self._ble_clients
@@ -168,9 +171,20 @@ class EdgeRunner:
                 log.exception("Error en la limpieza del outbox")
             await asyncio.sleep(self._purge_interval_s)
 
+    async def _on_command(self, raw: bytes) -> None:
+        try:
+            await asyncio.to_thread(self._control.handle_command, raw)
+        except Exception:
+            log.exception("Error al procesar la orden del enchufe")
+
     def _on_broker_connected(self) -> None:
         # paho lo invoca vía call_soon_threadsafe: corre en el loop.
         self._connectivity.republish_all()
+        if self._control is not None:
+            # En un hilo: si hay una orden en curso, espera al actuador.
+            task = asyncio.ensure_future(asyncio.to_thread(self._control.publish_state))
+            self._background.add(task)
+            task.add_done_callback(self._background.discard)
         if self._wake is not None:
             self._wake.set()
 
@@ -203,10 +217,10 @@ def build_runner(settings) -> EdgeRunner:
     """Arma el Edge con los adaptadores reales."""
     from monitoring.domain.services import BatchPolicy, ReadingFactory
     from monitoring.domain.value_objects import AlertThresholds
-    from monitoring.infrastructure.backend_desired_plug import BackendDesiredPlugSource
     from monitoring.infrastructure.ble_sensor_client import BleSensorClient
     from monitoring.infrastructure.http_actuator import HttpActuatorGateway
     from monitoring.infrastructure.mqtt_client import MqttGateway
+    from monitoring.infrastructure.mqtt_payloads import parse_plug_command
     from monitoring.infrastructure.sqlite_outbox import SqliteReadingOutbox
     from shared.clock import SystemClock
     from shared.database import init_db
@@ -227,12 +241,14 @@ def build_runner(settings) -> EdgeRunner:
         return thresholds.danger_ut
 
     if not settings.actuator_url:
-        log.warning("EMSAFE_ACTUATOR_URL vacío: el enchufe no se controla")
+        log.warning("EMSAFE_ACTUATOR_URL vacío: las órdenes del enchufe no se pueden aplicar")
     control = ControlPlugUseCase(
         HttpActuatorGateway(settings.actuator_url) if settings.actuator_url else None,
-        BackendDesiredPlugSource(settings.backend_url) if settings.backend_url else None,
+        mqtt,
         clock,
         thresholds_for,
+        settings.plug_id,
+        parse_plug_command,
         auto_cutoff_enabled=settings.auto_cutoff_enabled,
         restore_ut=settings.restore_ut,
     )

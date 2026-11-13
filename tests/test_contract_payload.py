@@ -3,7 +3,8 @@
 Lee los bloques ```json de la sección "Contrato MQTT" del README.md. Es la
 copia versionada del contrato: `docs/contrato-mqtt.md` queda solo en local y
 el CI no lo tiene. Orden de los bloques en el README:
-  0 telemetría · 1 estado del dispositivo · 2 Edge ONLINE · 3 Last Will
+  0 telemetría · 1 estado del dispositivo · 2 Edge ONLINE · 3 Last Will ·
+  4 orden del enchufe · 5 estado del enchufe
 
 Si cambias un ejemplo del README o el serializador, cambia el otro: es el
 idioma que comparten el Edge y la ingesta del backend.
@@ -17,6 +18,7 @@ from datetime import datetime, timezone
 from monitoring.domain.entities import OutboxMessage
 from monitoring.domain.services import ReadingFactory
 from monitoring.infrastructure import ble_protocol
+from monitoring.domain.value_objects import PlugAction, PlugState, PlugStateSource
 from monitoring.infrastructure import mqtt_payloads as mp
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -61,8 +63,8 @@ def readme_example_payload():
 
 
 class ReadmeSectionTest(unittest.TestCase):
-    def test_la_seccion_tiene_los_cuatro_ejemplos(self):
-        self.assertEqual(len(contract_examples()), 4)
+    def test_la_seccion_tiene_los_seis_ejemplos(self):
+        self.assertEqual(len(contract_examples()), 6)
 
 
 class TelemetryContractTest(unittest.TestCase):
@@ -126,11 +128,41 @@ class StatusContractTest(unittest.TestCase):
         self.assertNotIn("changedAt", lwt)
 
 
+class PlugContractTest(unittest.TestCase):
+    def test_el_ejemplo_de_orden_del_readme_se_interpreta(self):
+        raw = json.dumps(contract_examples()[4]).encode("utf-8")
+
+        command = mp.parse_plug_command("EMSafe-PLUG-01", raw)
+
+        self.assertEqual(command.command_id, "3b8e1f7a-2c4d-4e9b-8a1f-6d5c4b3a2e10")
+        self.assertIs(command.action, PlugAction.OFF)
+        self.assertEqual(command.requested_by, "USER")
+        self.assertEqual(command.requested_at, utc(2026, 11, 12, 15, 10, 0))
+
+    def test_estado_del_enchufe_identico_al_readme(self):
+        actual = mp.plug_state_payload(
+            "EMSafe-PLUG-01", PlugState.OFF, "3b8e1f7a-2c4d-4e9b-8a1f-6d5c4b3a2e10",
+            PlugStateSource.USER, utc(2026, 11, 12, 15, 10, 1, 250000),
+        )
+        expected = contract_examples()[5]
+        self.assertEqual(actual, expected)
+        self.assertEqual(list(actual), list(expected))
+
+    def test_estado_de_arranque_sin_command_id(self):
+        payload = mp.plug_state_payload(
+            "EMSafe-PLUG-01", PlugState.UNKNOWN, None, PlugStateSource.STARTUP, utc(2026, 1, 1)
+        )
+        self.assertEqual(json.loads(mp.to_json(payload))["commandId"], None)
+        self.assertEqual(payload["source"], "STARTUP")
+
+
 class TopicsTest(unittest.TestCase):
     def test_topicos_del_contrato(self):
         self.assertEqual(mp.telemetry_topic("EMSafe-DOS-01"), "iot/EMSafe-DOS-01/telemetry")
         self.assertEqual(mp.device_status_topic("EMSafe-DOS-01"), "iot/EMSafe-DOS-01/status")
         self.assertEqual(mp.edge_status_topic("EDGE-HOGAR-01"), "edge/EDGE-HOGAR-01/status")
+        self.assertEqual(mp.plug_command_topic("EMSafe-PLUG-01"), "iot/EMSafe-PLUG-01/command")
+        self.assertEqual(mp.plug_state_topic("EMSafe-PLUG-01"), "iot/EMSafe-PLUG-01/state")
 
 
 class IsoFormatTest(unittest.TestCase):

@@ -236,5 +236,57 @@ class StopTest(GatewayTestCase):
         self.assertEqual(self.paho.calls[-1], ("loop_stop",))
 
 
+class PlugTest(GatewayTestCase):
+    def make_with_commands(self):
+        self.paho = FakePahoClient()
+        self.commands = []
+        settings = EdgeSettings.from_env({})
+        self.gateway = MqttGateway(settings, FakeClock(), [DEVICE], client_factory=lambda s: self.paho)
+
+        async def on_command(raw):
+            self.commands.append(raw)
+
+        self.gateway.start(asyncio.get_running_loop(), None, on_command)
+
+    async def test_sin_handler_no_se_suscribe(self):
+        self.make()
+        self.connect()
+        self.assertEqual(self.paho.subscribed, [])
+
+    async def test_se_suscribe_a_las_ordenes_y_las_pasa_al_loop(self):
+        self.make_with_commands()
+        self.connect()
+        self.assertEqual(self.paho.subscribed, [("iot/EMSafe-PLUG-01/command", 1)])
+
+        t = threading.Thread(target=self.gateway._handle_message,
+                             args=(self.paho, None, FakeMessage("iot/EMSafe-PLUG-01/command", b'{"x":1}')))
+        t.start()
+        t.join()
+        for _ in range(10):
+            await asyncio.sleep(0.001)
+        self.assertEqual(self.commands, [b'{"x":1}'])
+
+    async def test_topico_ajeno_se_ignora(self):
+        self.make_with_commands()
+        self.gateway._handle_message(self.paho, None, FakeMessage("iot/OTRO/command", b"{}"))
+        await asyncio.sleep(0.01)
+        self.assertEqual(self.commands, [])
+
+    async def test_estado_del_enchufe_retained_qos_1(self):
+        from monitoring.domain.value_objects import PlugState, PlugStateSource
+
+        self.make()
+        self.assertFalse(self.gateway.publish_plug_state(
+            "EMSafe-PLUG-01", PlugState.OFF, "c-1", PlugStateSource.USER, T0))
+        self.connect()
+        self.assertTrue(self.gateway.publish_plug_state(
+            "EMSafe-PLUG-01", PlugState.OFF, "c-1", PlugStateSource.USER, T0))
+        topic, payload, qos, retain, _ = self.paho.published[-1]
+        self.assertEqual((topic, qos, retain), ("iot/EMSafe-PLUG-01/state", 1, True))
+        self.assertEqual(payload["state"], "OFF")
+        self.assertEqual(payload["source"], "USER")
+        self.assertEqual(payload["commandId"], "c-1")
+
+
 if __name__ == "__main__":
     unittest.main()

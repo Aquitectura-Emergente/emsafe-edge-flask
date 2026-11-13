@@ -1,4 +1,4 @@
-"""Entidades: lectura y mensaje del outbox."""
+"""Entidades: lectura, mensaje del outbox y orden del enchufe."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -9,6 +9,7 @@ from monitoring.domain.value_objects import (
     AlertLevel,
     CapturedAtSource,
     MagneticFluxDensity,
+    PlugAction,
     ReadingIdentity,
     ReadingQuality,
     SyncOrigin,
@@ -91,3 +92,28 @@ class OutboxMessage:
     @property
     def origin(self) -> SyncOrigin:
         return self.readings[0].origin
+
+
+class InvalidPlugCommand(ValueError):
+    """Orden del enchufe que no cumple el contrato."""
+
+
+@dataclass(frozen=True)
+class PlugCommand:
+    """Orden del usuario recibida por `iot/{plugId}/command`."""
+
+    command_id: str
+    plug_id: str
+    action: PlugAction
+    requested_at: datetime
+    requested_by: str = "USER"
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.command_id, str) or not self.command_id.strip():
+            raise InvalidPlugCommand("commandId vacío")
+        if not isinstance(self.plug_id, str) or not self.plug_id.strip():
+            raise InvalidPlugCommand("plugId vacío")
+        try:
+            _require_utc("requestedAt", self.requested_at)
+        except ValueError as exc:
+            raise InvalidPlugCommand(str(exc))

@@ -170,3 +170,26 @@ class AlertLevel(Enum):
     @property
     def requires_cut_off(self) -> bool:
         return self is AlertLevel.DANGER
+
+
+class PlugAction(Enum):
+    """Orden para el enchufe."""
+
+    ON = "ON"
+    OFF = "OFF"
+
+
+class PlugState(Enum):
+    """Estado conocido del enchufe. UNKNOWN: el Edge todavía no lo accionó."""
+
+    ON = "ON"
+    OFF = "OFF"
+    UNKNOWN = "UNKNOWN"
+
+
+class PlugStateSource(Enum):
+    """Quién dejó el enchufe en su estado: el usuario, la regla automática o el arranque del Edge."""
+
+    USER = "USER"
+    AUTO = "AUTO"
+    STARTUP = "STARTUP"
