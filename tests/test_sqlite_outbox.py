@@ -8,6 +8,8 @@ from datetime import timedelta, timezone
 
 from monitoring.domain.services import ReadingFactory
 from monitoring.domain.value_objects import (
+    AlertLevel,
+    AlertThresholds,
     CapturedAtSource,
     ReadingIdentity,
     ReadingQuality,
@@ -62,6 +64,21 @@ class AddTest(OutboxTestCase):
     def test_find_de_una_identidad_inexistente(self):
         self.assertIsNone(self.outbox.find(ReadingIdentity(DEVICE, 99, TS)))
 
+
+
+class LevelAndHistoryTest(OutboxTestCase):
+    def test_el_nivel_se_guarda_y_se_recupera(self):
+        r = factory.from_raw(DEVICE, 1, TS, 150.0, 0, T0, AlertThresholds(100, 120))
+        self.outbox.add(r)
+        self.assertIs(self.outbox.find(r.identity).level, AlertLevel.DANGER)
+
+    def test_latest_devuelve_las_mas_recientes_primero(self):
+        for seq in range(1, 6):
+            self.outbox.add(reading(seq=seq))
+        self.outbox.add(reading(seq=1, device="OTRO"))
+
+        self.assertEqual([r.sequence for r in self.outbox.latest(limit=3)], [1, 5, 4])
+        self.assertEqual([r.sequence for r in self.outbox.latest(DEVICE, 2)], [5, 4])
 
 class DeduplicationTest(OutboxTestCase):
     def test_reenvio_del_buffer_completo_no_duplica(self):

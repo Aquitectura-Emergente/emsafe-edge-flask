@@ -8,11 +8,13 @@ import unittest
 from functools import partial
 
 from monitoring.application.apply_device_config import ApplyDeviceConfigUseCase
+from monitoring.application.control_plug import ControlPlugUseCase
 from monitoring.application.ingest_reading import IngestReadingUseCase
 from monitoring.application.publish_outbox import PublishOutboxUseCase
 from monitoring.application.purge_outbox import PurgeOutboxUseCase
 from monitoring.application.track_connectivity import TrackConnectivityUseCase
 from monitoring.domain.services import ReadingFactory
+from monitoring.domain.value_objects import AlertThresholds
 from monitoring.infrastructure.ble_sensor_client import ReadingReceived, SessionStarted
 from monitoring.infrastructure.ble_protocol import RawReading
 from monitoring.infrastructure.mqtt_payloads import parse_device_config
@@ -175,6 +177,44 @@ class FullCycleTest(unittest.IsolatedAsyncioTestCase):
             await wait_until(lambda: flaky.calls == 3)
         runner.stop()
         await asyncio.wait_for(task, 2)
+
+
+class RecordingActuator:
+    def __init__(self):
+        self.calls = []
+
+    def turn_off(self):
+        self.calls.append("off")
+        return True
+
+    def turn_on(self):
+        self.calls.append("on")
+        return True
+
+
+class PlugWorkerTest(unittest.IsolatedAsyncioTestCase):
+    async def test_tiempo_real_en_danger_corta_y_las_diferidas_no(self):
+        clock, actuator = FakeClock(), RecordingActuator()
+        thresholds = lambda _d: AlertThresholds(100, 200)
+        control = ControlPlugUseCase(actuator, None, clock, thresholds)
+        holder = []
+        ingest = IngestReadingUseCase(
+            FakeOutbox(), ReadingFactory(790.0), clock, thresholds,
+            on_stored=lambda r: holder[0].reading_stored(r),
+        )
+        readings = [
+            RawReading(seq=1, ts=TS + 1, uT=500.0, deferred=1),
+            RawReading(seq=2, ts=TS + 2, uT=250.0, deferred=0),
+        ]
+        runner, _, _, _ = build(readings, ingest=ingest)
+        runner._control = control
+        holder.append(runner)
+        task = asyncio.create_task(runner.run())
+
+        await wait_until(lambda: actuator.calls == ["off"])
+        runner.stop()
+        await asyncio.wait_for(task, 2)
+        self.assertEqual(runner.health()["actuator"]["plug"], "OFF")
 
 
 class BuildRunnerTest(unittest.TestCase):
