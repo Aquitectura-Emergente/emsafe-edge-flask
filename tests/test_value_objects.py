@@ -1,112 +1,115 @@
-"""Tests de la regla de clasificacion: el edge es la autoridad de toda la plataforma.
-
-Se usa `unittest` de la libreria estandar a proposito: el repo tiene cuatro
-dependencias de produccion y ninguna de desarrollo, y se queda asi.
-
-    python -m unittest discover -s tests -v
-"""
+"""Value objects: ninguno puede existir con un valor inválido."""
 import unittest
 
 from monitoring.domain.value_objects import (
-    CAUTION_UT,
-    DANGER_UT,
-    AlertLevel,
-    MagneticField,
+    CapturedAtSource,
+    DeviceType,
+    InvalidReading,
+    MagneticFluxDensity,
+    ReadingIdentity,
+    ReadingQuality,
+    SyncOrigin,
 )
 
 
-class MagneticFieldTest(unittest.TestCase):
-    def test_acepta_un_numero(self):
-        self.assertEqual(MagneticField.from_raw(45.2).micro_tesla, 45.2)
+class MagneticFluxDensityTest(unittest.TestCase):
+    def test_acepta_cero_y_positivos(self):
+        self.assertEqual(MagneticFluxDensity.from_raw(0).micro_tesla, 0.0)
+        self.assertEqual(MagneticFluxDensity.from_raw(219.5).micro_tesla, 219.5)
+        self.assertEqual(MagneticFluxDensity.from_raw("12.5").micro_tesla, 12.5)
 
-    def test_acepta_una_cadena_numerica(self):
-        # El ESP32 manda JSON: el valor puede llegar como cadena.
-        self.assertEqual(MagneticField.from_raw("45.2").micro_tesla, 45.2)
+    def test_normaliza_enteros_a_float(self):
+        self.assertIsInstance(MagneticFluxDensity(300).micro_tesla, float)
 
-    def test_acepta_cero(self):
-        self.assertEqual(MagneticField.from_raw(0).micro_tesla, 0.0)
+    def test_rechaza_no_numericos(self):
+        for raw in ("abc", None, [], object()):
+            with self.assertRaises(InvalidReading, msg=repr(raw)):
+                MagneticFluxDensity.from_raw(raw)
 
-    def test_rechaza_lo_que_no_es_numero(self):
-        for malo in ("abc", None, [], {}):
-            with self.subTest(valor=malo):
-                with self.assertRaises(ValueError) as ctx:
-                    MagneticField.from_raw(malo)
-                # El endpoint devuelve este mensaje al dispositivo: no cambiarlo.
-                self.assertEqual(str(ctx.exception), "field_uT invalido")
+    def test_rechaza_booleanos_aunque_python_los_trate_como_int(self):
+        with self.assertRaises(InvalidReading):
+            MagneticFluxDensity.from_raw(True)
+        with self.assertRaises(InvalidReading):
+            MagneticFluxDensity(True)
+
+    def test_rechaza_nan_e_infinitos(self):
+        # Un float del BLE puede traer NaN o inf; JSON no los representa.
+        for raw in (float("nan"), float("inf"), float("-inf"), "nan"):
+            with self.assertRaises(InvalidReading, msg=repr(raw)):
+                MagneticFluxDensity.from_raw(raw)
 
     def test_rechaza_negativos(self):
-        with self.assertRaises(ValueError) as ctx:
-            MagneticField.from_raw(-1)
-        self.assertEqual(str(ctx.exception), "field_uT no puede ser negativo")
+        with self.assertRaises(InvalidReading):
+            MagneticFluxDensity.from_raw(-0.1)
 
-    def test_rechaza_nan(self):
-        # NaN no es < 0 ni >= 0: sin comprobacion explicita se colaria.
-        with self.assertRaises(ValueError):
-            MagneticField.from_raw(float("nan"))
-
-    def test_es_inmutable(self):
-        field = MagneticField.from_raw(50)
-        with self.assertRaises(Exception):
-            field.micro_tesla = 999
+    def test_invalid_reading_es_value_error(self):
+        self.assertTrue(issubclass(InvalidReading, ValueError))
 
 
-class AlertLevelTest(unittest.TestCase):
-    def nivel(self, micro_tesla):
-        return AlertLevel.for_field(MagneticField.from_raw(micro_tesla))
+class SyncOriginTest(unittest.TestCase):
+    def test_flag_1_es_diferida(self):
+        self.assertIs(SyncOrigin.from_flag(1), SyncOrigin.DEFERRED)
 
-    def test_por_debajo_del_umbral_de_precaucion_es_seguro(self):
-        for valor in (0, 45.2, 99.99):
-            with self.subTest(uT=valor):
-                self.assertIs(self.nivel(valor), AlertLevel.SAFE)
+    def test_cualquier_otro_flag_es_tiempo_real(self):
+        for flag in (0, 2, 255):
+            self.assertIs(SyncOrigin.from_flag(flag), SyncOrigin.REALTIME)
 
-    def test_el_umbral_de_precaucion_es_inclusivo(self):
-        self.assertIs(self.nivel(100.0), AlertLevel.CAUTION)
 
-    def test_entre_umbrales_es_precaucion(self):
-        for valor in (100.01, 150.7, 199.99):
-            with self.subTest(uT=valor):
-                self.assertIs(self.nivel(valor), AlertLevel.CAUTION)
+class ReadingQualityTest(unittest.TestCase):
+    def test_borde_de_saturacion(self):
+        sat = 790.0
+        self.assertIs(ReadingQuality.classify(MagneticFluxDensity(789.9), sat), ReadingQuality.VALID)
+        self.assertIs(ReadingQuality.classify(MagneticFluxDensity(790.0), sat), ReadingQuality.SATURATED)
+        self.assertIs(ReadingQuality.classify(MagneticFluxDensity(1000.0), sat), ReadingQuality.SATURATED)
 
-    def test_el_umbral_de_peligro_es_inclusivo(self):
-        self.assertIs(self.nivel(200.0), AlertLevel.DANGER)
 
-    def test_por_encima_del_umbral_de_peligro_es_peligro(self):
-        for valor in (250.4, 10_000):
-            with self.subTest(uT=valor):
-                self.assertIs(self.nivel(valor), AlertLevel.DANGER)
+class ContractValuesTest(unittest.TestCase):
+    """Los valores de los enums viajan tal cual en el contrato MQTT."""
 
-    def test_los_umbrales_son_los_acordados_con_los_otros_stacks(self):
-        # Duplicados en el backend (Java), la web (TS) y el movil (Dart).
-        # Si estos cambian sin cambiar los otros, se rompe la coherencia.
-        self.assertEqual(CAUTION_UT, 100.0)
-        self.assertEqual(DANGER_UT, 200.0)
+    def test_valores_literales_del_contrato(self):
+        self.assertEqual({e.value for e in SyncOrigin}, {"REALTIME", "DEFERRED"})
+        self.assertEqual({e.value for e in ReadingQuality}, {"VALID", "SATURATED"})
+        self.assertEqual({e.value for e in CapturedAtSource}, {"DEVICE_CLOCK", "EDGE_RECEIVED"})
+        self.assertEqual({e.value for e in DeviceType}, {"PERSONAL_DOSIMETER", "FIXED_SENSOR"})
 
-    def test_cada_nivel_arrastra_su_mensaje(self):
-        for level in AlertLevel:
-            with self.subTest(nivel=level.name):
-                self.assertTrue(level.message)
 
-    def test_los_mensajes_son_los_que_consumen_los_clientes(self):
+class ReadingIdentityTest(unittest.TestCase):
+    def test_misma_terna_es_la_misma_identidad(self):
+        a = ReadingIdentity("EMSafe-DOS-01", 10, 1700000000)
+        b = ReadingIdentity("EMSafe-DOS-01", 10, 1700000000)
+        self.assertEqual(a, b)
+        self.assertEqual(hash(a), hash(b))
+
+    def test_cambia_cualquier_componente_cambia_la_identidad(self):
+        base = ReadingIdentity("EMSafe-DOS-01", 10, 1700000000)
+        self.assertNotEqual(base, ReadingIdentity("EMSafe-DOS-02", 10, 1700000000))
+        self.assertNotEqual(base, ReadingIdentity("EMSafe-DOS-01", 11, 1700000000))
+        # seq se reinicia con el ESP32: mismo seq, otra hora, otra lectura.
+        self.assertNotEqual(base, ReadingIdentity("EMSafe-DOS-01", 10, 1700000999))
+
+    def test_ts_cero_es_valido_y_marca_que_no_hay_reloj(self):
+        identity = ReadingIdentity("EMSafe-DOS-01", 1, 0)
+        self.assertFalse(identity.has_device_clock)
+        self.assertTrue(ReadingIdentity("EMSafe-DOS-01", 1, 5).has_device_clock)
+
+    def test_ts_cero_con_mismo_seq_colisiona_limitacion_conocida(self):
+        # Documentado en el contrato: dos arranques sin hora colisionan
+        # hasta que el firmware exponga un bootId.
         self.assertEqual(
-            AlertLevel.SAFE.message,
-            "Campo dentro de rango seguro. Equipo operando con normalidad.")
-        self.assertEqual(
-            AlertLevel.CAUTION.message,
-            "Exposicion moderada. Se recomienda mantener distancia de la fuente.")
-        self.assertEqual(
-            AlertLevel.DANGER.message,
-            "Nivel critico de EMF. Se recomienda cortar la energia del equipo.")
+            ReadingIdentity("EMSafe-DOS-01", 1, 0), ReadingIdentity("EMSafe-DOS-01", 1, 0)
+        )
 
-    def test_el_valor_que_viaja_por_la_api_es_en_mayusculas(self):
-        # El backend persiste esta cadena tal cual y no reclasifica.
-        self.assertEqual(AlertLevel.SAFE.wire_value, "SAFE")
-        self.assertEqual(AlertLevel.CAUTION.wire_value, "CAUTION")
-        self.assertEqual(AlertLevel.DANGER.wire_value, "DANGER")
-
-    def test_solo_danger_aconseja_cortar(self):
-        self.assertFalse(AlertLevel.SAFE.requires_cut_off)
-        self.assertFalse(AlertLevel.CAUTION.requires_cut_off)
-        self.assertTrue(AlertLevel.DANGER.requires_cut_off)
+    def test_rechaza_componentes_invalidos(self):
+        with self.assertRaises(InvalidReading):
+            ReadingIdentity("", 1, 0)
+        with self.assertRaises(InvalidReading):
+            ReadingIdentity("EMSafe-DOS-01", -1, 0)
+        with self.assertRaises(InvalidReading):
+            ReadingIdentity("EMSafe-DOS-01", 1, -5)
+        with self.assertRaises(InvalidReading):
+            ReadingIdentity("EMSafe-DOS-01", 1.5, 0)
+        with self.assertRaises(InvalidReading):
+            ReadingIdentity("EMSafe-DOS-01", True, 0)
 
 
 if __name__ == "__main__":
