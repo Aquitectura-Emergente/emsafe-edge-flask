@@ -76,8 +76,11 @@ class BleSensorClient:
         scan_timeout_s: float = 10.0,
         min_backoff_s: float = 1.0,
         max_backoff_s: float = 30.0,
+        device_id: str = "",
     ) -> None:
         self.device_name = device_name
+        # deviceId de las lecturas y del estado; vacío = el nombre BLE.
+        self.device_id = device_id or device_name
         self._queue = queue
         self._threshold_for = threshold_for
         self._connectivity = connectivity
@@ -172,12 +175,12 @@ class BleSensorClient:
         try:
             await client.connect()
             await client.start_notify(proto.READING_UUID, self._on_notify)
-            threshold = self._threshold_for(self.device_name)
+            threshold = self._threshold_for(self.device_id)
             await client.write_gatt_char(
                 proto.THRESHOLD_UUID, proto.encode_threshold(threshold), response=True
             )
             # Antes de la hora, para que quede delante de las lecturas de esta sesión.
-            self._queue.put_nowait(SessionStarted(self.device_name))
+            self._queue.put_nowait(SessionStarted(self.device_id))
             epoch = int(self._clock.now().timestamp())
             await client.write_gatt_char(proto.TIME_UUID, proto.encode_time(epoch), response=True)
         except Exception as exc:
@@ -188,13 +191,13 @@ class BleSensorClient:
 
         self._connected = True
         log.info("Conectado a %s (umbral %.1f µT, hora %s)", self.device_name, threshold, epoch)
-        self._connectivity.device_connected(self.device_name)
+        self._connectivity.device_connected(self.device_id)
         try:
             await self._disconnected.wait()
         finally:
             self._connected = False
             self._client = None
-            self._connectivity.device_disconnected(self.device_name)
+            self._connectivity.device_disconnected(self.device_id)
             log.info("Desconectado de %s", self.device_name)
         return True
 
@@ -212,7 +215,7 @@ class BleSensorClient:
         except proto.BleProtocolError as exc:
             log.warning("Notificación inválida de %s: %s", self.device_name, exc)
             return
-        self._enqueue(ReadingReceived(self.device_name, raw))
+        self._enqueue(ReadingReceived(self.device_id, raw))
 
     def _enqueue(self, item) -> None:
         # asyncio.Queue no es thread-safe: si bleak llama desde otro hilo, se pasa por el loop.

@@ -82,7 +82,7 @@ class EdgeRunner:
             except Exception as exc:
                 data["outbox"] = {"error": str(exc)}
         if self._thresholds_for is not None and self._ble_clients:
-            device_id = self._ble_clients[0].device_name
+            device_id = getattr(self._ble_clients[0], "device_id", self._ble_clients[0].device_name)
             t = self._thresholds_for(device_id)
             data["thresholds"] = {"cautionUT": t.caution_ut, "dangerUT": t.danger_ut}
             if self._control is not None:
@@ -229,7 +229,7 @@ def build_runner(settings) -> EdgeRunner:
     clock = SystemClock()
     outbox = SqliteReadingOutbox()
     queue: asyncio.Queue = asyncio.Queue()
-    mqtt = MqttGateway(settings, clock, settings.device_names)
+    mqtt = MqttGateway(settings, clock, settings.device_ids)
     connectivity = TrackConnectivityUseCase(mqtt, clock)
     thresholds = AlertThresholds(settings.caution_ut, settings.danger_ut)
 
@@ -253,8 +253,12 @@ def build_runner(settings) -> EdgeRunner:
         restore_ut=settings.restore_ut,
     )
     ble_clients = []
-    for name in settings.device_names:
-        ble_clients.append(BleSensorClient(name, queue, sensor_threshold, connectivity, clock))
+    for name, device_id in zip(settings.device_names, settings.device_ids):
+        ble_clients.append(
+            BleSensorClient(
+                name, queue, sensor_threshold, connectivity, clock, device_id=device_id
+            )
+        )
 
     runner_ref: List[EdgeRunner] = []
     ingest = IngestReadingUseCase(

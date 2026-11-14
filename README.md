@@ -197,7 +197,8 @@ el arranque con un mensaje que nombra la variable.
 |---|---|---|
 | `EMSAFE_EDGE_NODE_ID` | Identificador del nodo Edge | `EDGE-HOGAR-01` |
 | `EMSAFE_ORGANIZATION_ID` | Organización del nodo | `org-demo` |
-| `EMSAFE_DEVICE_NAME` | Nombre BLE del sensor (es también su `deviceId`) | `EMSafe-DOS-01` |
+| `EMSAFE_DEVICE_NAME` | Nombre BLE con el que se busca el sensor | `EMSafe-DOS-01` |
+| `EMSAFE_DEVICE_ID` | `deviceId` publicado por MQTT (telemetría y estado) | vacío = el nombre BLE |
 | `EMSAFE_CAUTION_UT` | Desde qué valor una lectura es CAUTION | `100` |
 | `EMSAFE_DANGER_UT` | Desde qué valor es DANGER; se escribe en el sensor | `200` |
 | `EMSAFE_RESTORE_UT` | Restablecer el enchufe por debajo de este valor | 80 % de DANGER |

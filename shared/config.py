@@ -69,6 +69,8 @@ class EdgeSettings:
     edge_node_id: str = "EDGE-HOGAR-01"
     organization_id: str = "org-demo"
     device_name: str = "EMSafe-DOS-01"
+    # deviceId publicado por MQTT; vacío = el nombre BLE.
+    device_id: str = ""
     caution_ut: float = 100.0
     danger_ut: float = 200.0
     # None: 80 % del umbral de DANGER vigente.
@@ -116,6 +118,10 @@ class EdgeSettings:
     def device_names(self) -> Tuple[str, ...]:
         return (self.device_name,)
 
+    @property
+    def device_ids(self) -> Tuple[str, ...]:
+        return (self.device_id or self.device_name,)
+
     @classmethod
     def from_env(cls, env: Optional[Mapping[str, str]] = None) -> "EdgeSettings":
         env = os.environ if env is None else env
@@ -124,6 +130,7 @@ class EdgeSettings:
             edge_node_id=_text(env, "EMSAFE_EDGE_NODE_ID", d.edge_node_id),
             organization_id=_text(env, "EMSAFE_ORGANIZATION_ID", d.organization_id),
             device_name=_text(env, "EMSAFE_DEVICE_NAME", d.device_name),
+            device_id=_text(env, "EMSAFE_DEVICE_ID", d.device_id),
             caution_ut=_float(env, "EMSAFE_CAUTION_UT", d.caution_ut),
             danger_ut=_float(env, "EMSAFE_DANGER_UT", d.danger_ut),
             restore_ut=_optional_float(env, "EMSAFE_RESTORE_UT"),

@@ -12,6 +12,7 @@ class DefaultsTest(unittest.TestCase):
         self.assertEqual(s.organization_id, "org-demo")
         self.assertEqual(s.device_name, "EMSafe-DOS-01")
         self.assertEqual(s.device_names, ("EMSafe-DOS-01",))
+        self.assertEqual(s.device_ids, ("EMSafe-DOS-01",))
         self.assertEqual(s.caution_ut, 100.0)
         self.assertEqual(s.danger_ut, 200.0)
         self.assertIsNone(s.restore_ut)
@@ -44,6 +45,15 @@ class DefaultsTest(unittest.TestCase):
 
 
 class ParsingTest(unittest.TestCase):
+    def test_device_id_separado_del_nombre_ble(self):
+        s = EdgeSettings.from_env({
+            "EMSAFE_DEVICE_NAME": "EMSafe-DOS-01",
+            "EMSAFE_DEVICE_ID": "EMSAFE-HOGAR-0001",
+        })
+
+        self.assertEqual(s.device_names, ("EMSafe-DOS-01",))
+        self.assertEqual(s.device_ids, ("EMSAFE-HOGAR-0001",))
+
     def test_lee_todas_las_variables(self):
         s = EdgeSettings.from_env({
             "EMSAFE_EDGE_NODE_ID": "EDGE-HOGAR-07",
