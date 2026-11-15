@@ -63,6 +63,7 @@ monitoring/
 shared/            config (variables de entorno), database (SQLite en modo WAL), clock
 firmware/          sketches del sensor y del actuador, y el prototipo Wokwi anterior
 tests/             unittest con dobles
+features/          escenarios de aceptación (behave)
 app.py             arranque de Flask y del Edge, apagado ordenado
 ```
 
@@ -385,8 +386,23 @@ se pueden restar y la lectura puede *bajar* al acercarlo.
 Los tests usan dobles y SQLite en memoria, sin BLE, broker ni red. Cubren el dominio, la
 clasificación, las órdenes y el estado del enchufe, el corte automático (incluidas las diferidas), el outbox,
 los adaptadores y la API. `tests/test_contract_payload.py` compara el JSON que genera el código con
-los ejemplos de [Contrato MQTT](#contrato-mqtt). El CI corre lo mismo en Python 3.11 en cada push y
-pull request.
+los ejemplos de [Contrato MQTT](#contrato-mqtt).
+
+### Escenarios de aceptación (behave)
+
+`features/` tiene los escenarios en Gherkin (español) y `features/steps/` sus pasos. Levantan el
+Edge completo (runner, casos de uso, outbox SQLite y adaptadores MQTT y HTTP reales); solo el broker
+y la llamada HTTP al actuador son dobles (`features/environment.py`).
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+$env:PYTHONUTF8 = "1"   # tildes correctas en la consola de Windows
+.\.venv\Scripts\python.exe -m behave
+```
+
+Para guardar un reporte JUnit: `python -m behave --junit --junit-directory reports`.
+
+El CI corre los tests y los escenarios en Python 3.11 en cada push y pull request.
 
 ---
 
