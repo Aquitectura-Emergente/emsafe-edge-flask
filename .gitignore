@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 *.db
 firmware/actuador_emsafe/secrets.h
+
+# Reportes de behave
+reports/
