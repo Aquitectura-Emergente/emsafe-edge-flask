@@ -275,9 +275,9 @@ $env:EMSAFE_ACTUATOR_URL = "http://172.20.10.5"
 **Qué se espera:**
 
 - En el log: `Conectado al broker MQTT` y `Conectado a EMSafe-DOS-01 (umbral 200.0 µT, ...)`.
-  Luego una línea por segundo con el valor, el nivel y `REALTIME`.
+  Luego una línea cada 30 s con el valor, el nivel y `REALTIME`.
 - En la terminal 1: `edge/EDGE-HOGAR-01/status` con `ONLINE`, `iot/EMSafe-DOS-01/status` con
-  `"connectivity":"ONLINE"` y un `iot/EMSafe-DOS-01/telemetry` por segundo con
+  `"connectivity":"ONLINE"` y un `iot/EMSafe-DOS-01/telemetry` cada 30 s con
   `"deviceType":"FIXED_SENSOR"`. Si el sensor tenía lecturas guardadas, primero llegan lotes
   `DEFERRED` de hasta 50.
 - En la terminal 1 también aparece `iot/EMSafe-PLUG-01/state` con `"state":"UNKNOWN"` y

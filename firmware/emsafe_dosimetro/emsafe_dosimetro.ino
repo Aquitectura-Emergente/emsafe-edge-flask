@@ -19,8 +19,8 @@ const int PIN_BUZZER = 18;
 #define THRESH_UUID  "6e7a0004-5a1f-4c3b-9d2e-0000000000a1"
 
 // ---------- Parametros ----------
-const uint32_t SAMPLE_MS  = 1000;   // 1 lectura por segundo
-const uint32_t BUFFER_MAX = 1800;   // unos 30 minutos de lecturas
+const uint32_t SAMPLE_MS  = 30000;  // 1 lectura cada 30 s: la exposicion no cambia de un segundo a otro
+const uint32_t BUFFER_MAX = 1800;   // 15 h a 30 s: cubre la jornada completa sin Edge
 const char*    BUF_FILE   = "/buffer.bin";
 
 // ---------- Estado ----------
@@ -30,6 +30,7 @@ volatile bool clockValid = false;    // la hora se sincronizo al menos una vez
 volatile float thresholdUT = 300.0;  // umbral por defecto; lo reemplaza el Edge
 uint32_t epochAtSync = 0, millisAtSync = 0;
 uint32_t seq = 0, lost = 0, buffered = 0, lastSample = 0;
+bool alarmOn = false;                // la ultima lectura supero el umbral
 bool magOverflow = false;            // algun eje fuera de rango en la ultima lectura
 const float SATURATION_UT = 800.0;   // valor reportado cuando el sensor se satura
 BLECharacteristic* chReading;
@@ -244,7 +245,10 @@ void loop() {
   // Enviar lo pendiente apenas el Edge esta listo
   if (connected && sessionReady && buffered > 0) bufferFlush();
 
-  if (millis() - lastSample < SAMPLE_MS) return;
+  // Pitido intermitente (medio segundo) mientras la ultima lectura supere el umbral
+  digitalWrite(PIN_BUZZER, (alarmOn && (millis() / 500) % 2) ? HIGH : LOW);
+
+  if (lastSample != 0 && millis() - lastSample < SAMPLE_MS) return;
   lastSample = millis();
 
   float uT = readFieldUT();
@@ -255,7 +259,7 @@ void loop() {
   bool over = uT >= thresholdUT;
 
   // Alarma local: pitido intermitente mientras se supere el umbral
-  digitalWrite(PIN_BUZZER, (over && (seq % 2)) ? HIGH : LOW);
+  alarmOn = over;
 
   // LED de estado
   if (over)                         led(1, 0, 0);  // rojo

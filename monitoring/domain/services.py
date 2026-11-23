@@ -71,7 +71,7 @@ class BatchPolicy:
 
     Un mensaje lleva un solo dispositivo y un solo origen. Las de tiempo real
     van de a una; las diferidas, hasta `max_deferred` por mensaje, porque el
-    buffer del sensor puede traer 1800 de golpe. Solo se agrupan lecturas
+    buffer del sensor puede traer hasta 1800 de golpe. Solo se agrupan lecturas
     consecutivas, para respetar el orden de llegada de cada dispositivo.
     """
 
