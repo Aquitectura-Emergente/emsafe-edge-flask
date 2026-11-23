@@ -19,9 +19,10 @@ const int PIN_BUZZER = 18;
 #define THRESH_UUID  "6e7a0004-5a1f-4c3b-9d2e-0000000000a1"
 
 // ---------- Parametros ----------
-const uint32_t SAMPLE_MS  = 30000;  // 1 lectura cada 30 s: la exposicion no cambia de un segundo a otro
-const uint32_t BUFFER_MAX = 1800;   // 15 h a 30 s: cubre la jornada completa sin Edge
-const char*    BUF_FILE   = "/buffer.bin";
+const uint32_t SAMPLE_MS      = 30000;  // 1 lectura cada 30 s: la exposicion no cambia de un segundo a otro
+const uint32_t ALARM_CHECK_MS = 5000;   // revision del sensor solo para la alarma local
+const uint32_t BUFFER_MAX     = 1800;   // 15 h a 30 s: cubre la jornada completa sin Edge
+const char*    BUF_FILE       = "/buffer.bin";
 
 // ---------- Estado ----------
 volatile bool connected = false;     // hay un Edge conectado
@@ -29,8 +30,8 @@ volatile bool sessionReady = false;  // el Edge ya envio la hora
 volatile bool clockValid = false;    // la hora se sincronizo al menos una vez
 volatile float thresholdUT = 300.0;  // umbral por defecto; lo reemplaza el Edge
 uint32_t epochAtSync = 0, millisAtSync = 0;
-uint32_t seq = 0, lost = 0, buffered = 0, lastSample = 0;
-bool alarmOn = false;                // la ultima lectura supero el umbral
+uint32_t seq = 0, lost = 0, buffered = 0, lastSample = 0, lastCheck = 0;
+bool alarmOn = false;                // la ultima revision supero el umbral
 bool magOverflow = false;            // algun eje fuera de rango en la ultima lectura
 const float SATURATION_UT = 800.0;   // valor reportado cuando el sensor se satura
 BLECharacteristic* chReading;
@@ -245,20 +246,19 @@ void loop() {
   // Enviar lo pendiente apenas el Edge esta listo
   if (connected && sessionReady && buffered > 0) bufferFlush();
 
-  // Pitido intermitente (medio segundo) mientras la ultima lectura supere el umbral
+  // Pitido intermitente (medio segundo) mientras la ultima revision supere el umbral
   digitalWrite(PIN_BUZZER, (alarmOn && (millis() / 500) % 2) ? HIGH : LOW);
 
-  if (lastSample != 0 && millis() - lastSample < SAMPLE_MS) return;
-  lastSample = millis();
+  // El sensor se revisa cada 5 s para la alarma local; cada 30 s esa medicion
+  // ademas se guarda o se envia como lectura.
+  if (lastCheck != 0 && millis() - lastCheck < ALARM_CHECK_MS) return;
+  lastCheck = millis();
 
   float uT = readFieldUT();
   if (uT < 0) { Serial.println("Error leyendo el magnetometro"); return; }
 
-  Reading r = { ++seq, nowEpoch(), uT, 0 };
   bool online = connected && sessionReady;
   bool over = uT >= thresholdUT;
-
-  // Alarma local: pitido intermitente mientras se supere el umbral
   alarmOn = over;
 
   // LED de estado
@@ -266,6 +266,11 @@ void loop() {
   else if (uT >= 0.7 * thresholdUT) led(1, 1, 0);  // amarillo
   else if (online)                  led(0, 1, 0);  // verde
   else                              led(0, 0, 1);  // azul
+
+  if (lastSample != 0 && millis() - lastSample < SAMPLE_MS) return;
+  lastSample = millis();
+
+  Reading r = { ++seq, nowEpoch(), uT, 0 };
 
   if (online) {
     chReading->setValue((uint8_t*)&r, sizeof(r));
