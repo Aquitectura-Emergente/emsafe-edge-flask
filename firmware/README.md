@@ -2,7 +2,7 @@
 
 | Carpeta | Placa | Qué hace |
 |---|---|---|
-| `emsafe_dosimetro/` | ESP32 #1 + magnetómetro QMC5883L, LED RGB y buzzer | Sensor fijo del hogar (y dosímetro del Edge industrial). Mide una vez por segundo, transmite por BLE como `EMSafe-DOS-01` y guarda hasta 1800 lecturas cuando no hay Edge conectado. La alarma local usa el umbral que le escribe el Edge. |
+| `emsafe_dosimetro/` | ESP32 #1 + magnetómetro QMC5883L, LED RGB y buzzer | Sensor fijo del hogar (y dosímetro del Edge industrial). Mide una vez cada 30 s, transmite por BLE como `EMSafe-DOS-01` y guarda hasta 1800 lecturas (15 h) cuando no hay Edge conectado; lleno, sobrescribe las más viejas. La alarma local revisa el sensor cada 5 s con el umbral que le escribe el Edge (esas revisiones no se guardan ni se envían). |
 | `actuador_emsafe/` | ESP32 #2 + módulo relé en el GPIO 26 | Enchufe inteligente. Se conecta por WiFi y atiende `GET /off` (corta la energía) y `GET /on` (la restablece). Relé activo en LOW alimentado a 3V3. |
 | `legacy_wokwi/` | Simulación en Wokwi | Prototipo anterior: sensor A3144 simulado, relé en el mismo ESP32 y envío por POST HTTP. Ya no lo usa este Edge; se conserva como referencia. |
 
