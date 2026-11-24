@@ -21,8 +21,9 @@ const int PIN_BUZZER = 18;
 // ---------- Parametros ----------
 const uint32_t SAMPLE_MS      = 30000;  // 1 lectura cada 30 s: la exposicion no cambia de un segundo a otro
 const uint32_t ALARM_CHECK_MS = 5000;   // revision del sensor solo para la alarma local
-const uint32_t BUFFER_MAX     = 1800;   // 15 h a 30 s: cubre la jornada completa sin Edge
+const uint32_t BUFFER_MAX     = 1800;   // 15 h a 30 s; lleno, pisa las mas viejas
 const char*    BUF_FILE       = "/buffer.bin";
+const char*    META_FILE      = "/buffer.meta";
 
 // ---------- Estado ----------
 volatile bool connected = false;     // hay un Edge conectado
@@ -30,7 +31,7 @@ volatile bool sessionReady = false;  // el Edge ya envio la hora
 volatile bool clockValid = false;    // la hora se sincronizo al menos una vez
 volatile float thresholdUT = 300.0;  // umbral por defecto; lo reemplaza el Edge
 uint32_t epochAtSync = 0, millisAtSync = 0;
-uint32_t seq = 0, lost = 0, buffered = 0, lastSample = 0, lastCheck = 0;
+uint32_t seq = 0, overwritten = 0, buffered = 0, head = 0, lastSample = 0, lastCheck = 0;
 bool alarmOn = false;                // la ultima revision supero el umbral
 bool magOverflow = false;            // algun eje fuera de rango en la ultima lectura
 const float SATURATION_UT = 800.0;   // valor reportado cuando el sensor se satura
@@ -140,30 +141,78 @@ uint32_t nowEpoch() {
 }
 
 // ---------- Buffer en flash ----------
+// Buffer circular de BUFFER_MAX posiciones fijas en BUF_FILE. META_FILE guarda
+// donde esta la lectura mas vieja (head) y cuantas hay (buffered). Lleno, cada
+// lectura nueva reemplaza a la mas vieja: se conservan las mas recientes.
+void bufferSaveMeta() {
+  File m = LittleFS.open(META_FILE, FILE_WRITE);
+  if (!m) return;
+  m.write((const uint8_t*)&head, sizeof(head));
+  m.write((const uint8_t*)&buffered, sizeof(buffered));
+  m.close();
+}
+
+void bufferLoad() {
+  head = 0; buffered = 0;
+  if (!LittleFS.exists(BUF_FILE)) return;
+  File m = LittleFS.open(META_FILE, FILE_READ);
+  if (m && m.read((uint8_t*)&head, sizeof(head)) == sizeof(head)
+        && m.read((uint8_t*)&buffered, sizeof(buffered)) == sizeof(buffered)) {
+    m.close();
+  } else {
+    // Buffer lineal de un firmware anterior: empieza en 0
+    if (m) m.close();
+    File f = LittleFS.open(BUF_FILE, FILE_READ);
+    head = 0;
+    buffered = f.size() / sizeof(Reading);
+    f.close();
+  }
+  if (buffered > BUFFER_MAX) buffered = BUFFER_MAX;
+  if (head >= BUFFER_MAX) head = 0;
+}
+
 void bufferPush(const Reading& r) {
-  if (buffered >= BUFFER_MAX) { lost++; return; }
-  File f = LittleFS.open(BUF_FILE, FILE_APPEND);
+  uint32_t slot;
+  if (buffered < BUFFER_MAX) {
+    slot = (head + buffered) % BUFFER_MAX;
+    buffered++;
+  } else {
+    slot = head;                     // lleno: se pisa la mas vieja
+    head = (head + 1) % BUFFER_MAX;
+    overwritten++;
+  }
+  File f = LittleFS.open(BUF_FILE, LittleFS.exists(BUF_FILE) ? "r+" : "w");
   if (!f) return;
+  f.seek(slot * sizeof(Reading));
   f.write((const uint8_t*)&r, sizeof(r));
   f.close();
-  buffered++;
+  bufferSaveMeta();
+}
+
+void bufferClear() {
+  LittleFS.remove(BUF_FILE);
+  LittleFS.remove(META_FILE);
+  head = 0; buffered = 0;
 }
 
 void bufferFlush() {
-  if (!LittleFS.exists(BUF_FILE)) { buffered = 0; return; }
+  if (!LittleFS.exists(BUF_FILE)) { head = 0; buffered = 0; return; }
   File f = LittleFS.open(BUF_FILE, FILE_READ);
   led(1, 0, 1);                      // morado: sincronizando
   Reading r; uint32_t sent = 0;
-  while (connected && f.read((uint8_t*)&r, sizeof(r)) == sizeof(r)) {
+  // De la mas vieja a la mas reciente. Si se corta, la proxima vez se reenvia
+  // todo y el Edge descarta las repetidas.
+  while (connected && sent < buffered) {
+    f.seek(((head + sent) % BUFFER_MAX) * sizeof(Reading));
+    if (f.read((uint8_t*)&r, sizeof(r)) != sizeof(r)) break;
     r.deferred = 1;
     chReading->setValue((uint8_t*)&r, sizeof(r));
     chReading->notify();
     sent++;
     delay(15);
   }
-  bool done = (f.available() == 0);
   f.close();
-  if (done && connected) { LittleFS.remove(BUF_FILE); buffered = 0; }
+  if (sent == buffered && connected) bufferClear();
   Serial.printf("Buffer: %lu lecturas enviadas\n", (unsigned long)sent);
 }
 
@@ -209,11 +258,7 @@ void setup() {
   calibrate();
 
   LittleFS.begin(true);
-  if (LittleFS.exists(BUF_FILE)) {
-    File f = LittleFS.open(BUF_FILE, FILE_READ);
-    buffered = f.size() / sizeof(Reading);
-    f.close();
-  }
+  bufferLoad();
   Serial.printf("Lecturas pendientes en buffer: %lu\n", (unsigned long)buffered);
 
   BLEDevice::init(DEVICE_NAME);
@@ -279,7 +324,7 @@ void loop() {
     bufferPush(r);
   }
 
-  Serial.printf("#%lu  %.1f uT  umbral %.0f  %s  (buffer %lu, perdidas %lu)\n",
+  Serial.printf("#%lu  %.1f uT  umbral %.0f  %s  (buffer %lu, sobrescritas %lu)\n",
     (unsigned long)r.seq, uT, (float)thresholdUT, online ? "ENVIADA" : "GUARDADA",
-    (unsigned long)buffered, (unsigned long)lost);
+    (unsigned long)buffered, (unsigned long)overwritten);
 }
