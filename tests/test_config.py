@@ -9,10 +9,10 @@ class DefaultsTest(unittest.TestCase):
         s = EdgeSettings.from_env({})
 
         self.assertEqual(s.edge_node_id, "EDGE-HOGAR-01")
-        self.assertEqual(s.organization_id, "org-demo")
+        self.assertEqual(s.organization_id, "home-demo")
         self.assertEqual(s.device_name, "EMSafe-DOS-01")
         self.assertEqual(s.device_names, ("EMSafe-DOS-01",))
-        self.assertEqual(s.device_ids, ("EMSafe-DOS-01",))
+        self.assertEqual(s.device_ids, ("EMSafe-SEN-01",))
         self.assertEqual(s.caution_ut, 100.0)
         self.assertEqual(s.danger_ut, 200.0)
         self.assertIsNone(s.restore_ut)

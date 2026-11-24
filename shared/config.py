@@ -67,10 +67,12 @@ class EdgeSettings:
     """Parámetros del nodo, leídos una vez al arrancar."""
 
     edge_node_id: str = "EDGE-HOGAR-01"
-    organization_id: str = "org-demo"
+    # Código de la organización del hogar; "org-demo" es la planta industrial.
+    organization_id: str = "home-demo"
     device_name: str = "EMSafe-DOS-01"
-    # deviceId publicado por MQTT; vacío = el nombre BLE.
-    device_id: str = ""
+    # deviceId publicado por MQTT; vacío = el nombre BLE. Es distinto del
+    # dosímetro industrial aunque se use el mismo ESP32.
+    device_id: str = "EMSafe-SEN-01"
     caution_ut: float = 100.0
     danger_ut: float = 200.0
     # None: 80 % del umbral de DANGER vigente.
