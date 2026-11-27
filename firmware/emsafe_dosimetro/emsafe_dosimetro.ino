@@ -33,6 +33,7 @@ volatile float thresholdUT = 300.0;  // umbral por defecto; lo reemplaza el Edge
 uint32_t epochAtSync = 0, millisAtSync = 0;
 uint32_t seq = 0, overwritten = 0, buffered = 0, head = 0, lastSample = 0, lastCheck = 0;
 bool alarmOn = false;                // la ultima revision supero el umbral
+float windowMax = 0;                 // maximo de las revisiones desde la ultima lectura
 bool magOverflow = false;            // algun eje fuera de rango en la ultima lectura
 const float SATURATION_UT = 800.0;   // valor reportado cuando el sensor se satura
 BLECharacteristic* chReading;
@@ -294,8 +295,9 @@ void loop() {
   // Pitido intermitente (medio segundo) mientras la ultima revision supere el umbral
   digitalWrite(PIN_BUZZER, (alarmOn && (millis() / 500) % 2) ? HIGH : LOW);
 
-  // El sensor se revisa cada 5 s para la alarma local; cada 30 s esa medicion
-  // ademas se guarda o se envia como lectura.
+  // El sensor se revisa cada 5 s para la alarma local. Cada 30 s se guarda o
+  // envia el maximo de esas revisiones, y al superar el umbral se envia en el
+  // momento, para que un pico breve no se pierda entre lecturas.
   if (lastCheck != 0 && millis() - lastCheck < ALARM_CHECK_MS) return;
   lastCheck = millis();
 
@@ -304,7 +306,9 @@ void loop() {
 
   bool online = connected && sessionReady;
   bool over = uT >= thresholdUT;
+  bool crossed = over && !alarmOn;  // acaba de superar el umbral
   alarmOn = over;
+  if (uT > windowMax) windowMax = uT;
 
   // LED de estado
   if (over)                         led(1, 0, 0);  // rojo
@@ -312,10 +316,13 @@ void loop() {
   else if (online)                  led(0, 1, 0);  // verde
   else                              led(0, 0, 1);  // azul
 
-  if (lastSample != 0 && millis() - lastSample < SAMPLE_MS) return;
+  if (!crossed && lastSample != 0 && millis() - lastSample < SAMPLE_MS) return;
   lastSample = millis();
 
-  Reading r = { ++seq, nowEpoch(), uT, 0 };
+  // Al cruzar se envia esa medicion; si no, el pico de la ventana. La ventana
+  // se reinicia en ambos casos.
+  Reading r = { ++seq, nowEpoch(), crossed ? uT : windowMax, 0 };
+  windowMax = 0;
 
   if (online) {
     chReading->setValue((uint8_t*)&r, sizeof(r));
@@ -324,7 +331,8 @@ void loop() {
     bufferPush(r);
   }
 
-  Serial.printf("#%lu  %.1f uT  umbral %.0f  %s  (buffer %lu, sobrescritas %lu)\n",
-    (unsigned long)r.seq, uT, (float)thresholdUT, online ? "ENVIADA" : "GUARDADA",
+  Serial.printf("#%lu  %.1f uT%s  umbral %.0f  %s  (buffer %lu, sobrescritas %lu)\n",
+    (unsigned long)r.seq, r.uT, crossed ? " (umbral superado)" : "", (float)thresholdUT,
+    online ? "ENVIADA" : "GUARDADA",
     (unsigned long)buffered, (unsigned long)overwritten);
 }
